@@ -1,0 +1,58 @@
+messages:
+  trabalho:
+    - "Você completou uma tarefa e recebeu sua recompensa!"
+    - "Seu trabalho árduo valeu a pena. Parabéns!"
+    - "Você trabalhou diligentemente e ganhou moedas!"
+  crime:
+    - "Você tentou cometer um crime..."
+    - "Você está tentando a sorte no submundo..."
+    - "Uma aventura perigosa o aguarda..."
+  erros:
+    permissao: "Você não tem permissão para executar este comando."
+    personagem_nao_encontrado: "Personagem não encontrado."
+    acao_frequente: "Você já realizou esta ação recentemente. Tente novamente mais tarde."
+    dinheiro_permissao: "Apenas usuários com cargos especiais podem executar este comando."
+
+tiers:
+  "Pequeno Entusiasta":
+    nivel_min: 1
+    nivel_max: 4
+    recompensa: 25
+  "Recém Aventureiro":
+    nivel_min: 5
+    nivel_max: 8
+    recompensa: 40
+  "Novo Herói":
+    nivel_min: 9
+    nivel_max: 12
+    recompensa: 55
+  "Lendário":
+    nivel_min: 13
+    nivel_max: 16
+    recompensa: 75
+  "Chama Eterna":
+    nivel_min: 17
+    nivel_max: 20
+    recompensa: 105
+
+probabilidades:
+  crime: 50
+
+cargos_especiais:
+  saldo: []
+  marcos: []
+
+precos_padroes:
+  item_padrao: 100
+
+limites:
+  personagens_por_usuario: 2
+  intervalo_trabalhar: 43200  # 12 horas em segundos
+  intervalo_crime: 43200     # 12 horas em segundos
+
+progressao:
+  marcos_por_nivel:
+    "1-4": 16
+    "5-12": 4
+    "13-16": 2
+    "17-20": 1
