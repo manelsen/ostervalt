@@ -24,12 +24,32 @@ end
 
 const config = load_config()
 
+"""
+    Cache
+
+Estrutura para armazenamento em cache de dados temporários.
+
+# Campos
+- `data::Dict{String, Any}`: Dados armazenados em cache.
+- `ttl::Int`: Tempo de vida do cache em segundos.
+- `last_update::DateTime`: Momento da última atualização do cache.
+"""
 mutable struct Cache
     data::Dict{String, Any}
     ttl::Int
     last_update::DateTime
 end
 
+"""
+    get_cache(key::String, cache::Cache) -> Any
+
+Obtém um valor do cache se ainda estiver válido.
+
+- `key`: Chave de busca.
+- `cache`: Instância de Cache.
+
+Retorna o valor armazenado ou `nothing` se expirado ou não encontrado.
+"""
 function get_cache(key::String, cache::Cache)
     if haskey(cache.data, key) && (now() - cache.last_update).value < cache.ttl
         return cache.data[key]
@@ -37,6 +57,15 @@ function get_cache(key::String, cache::Cache)
     return nothing
 end
 
+"""
+    set_cache(key::String, value::Any, cache::Cache)
+
+Armazena um valor no cache e atualiza o timestamp.
+
+- `key`: Chave de armazenamento.
+- `value`: Valor a ser armazenado.
+- `cache`: Instância de Cache.
+"""
 function set_cache(key::String, value::Any, cache::Cache)
     cache.data[key] = value
     cache.last_update = now()
@@ -44,6 +73,16 @@ end
 
 const server_data_cache = Cache(Dict(), 300, now())
 
+"""
+    load_server_data(server_id::String) -> Dict
+
+Carrega os dados persistentes de um servidor Discord a partir de arquivo JSON.
+Utiliza cache para otimizar leituras frequentes.
+
+- `server_id`: ID do servidor Discord.
+
+Retorna um dicionário com todos os dados do servidor.
+"""
 function load_server_data(server_id::String)
     cached_data = get_cache(server_id, server_data_cache)
     if !isnothing(cached_data)
@@ -76,6 +115,14 @@ function load_server_data(server_id::String)
     return data
 end
 
+"""
+    save_server_data(server_id::String, data::Dict)
+
+Salva os dados do servidor Discord em arquivo JSON e atualiza o cache.
+
+- `server_id`: ID do servidor Discord.
+- `data`: Dicionário de dados a serem salvos.
+"""
 function save_server_data(server_id::String, data::Dict)
     open("server_data_$server_id.json", "w") do f
         JSON3.write(f, data)
@@ -84,6 +131,15 @@ function save_server_data(server_id::String, data::Dict)
     @info "Dados do servidor $server_id salvos e cache atualizado."
 end
 
+"""
+    update_item_price(server_id::String, item_name::String, value::String)
+
+Atualiza o preço de um item na base de dados do servidor.
+
+- `server_id`: ID do servidor Discord.
+- `item_name`: Nome do item.
+- `value`: Novo valor do item (string).
+"""
 function update_item_price(server_id::String, item_name::String, value::String)
     data = load_server_data(server_id)
     data["prices"] = get(data, "prices", Dict())
@@ -92,10 +148,28 @@ function update_item_price(server_id::String, item_name::String, value::String)
     @info "Preço atualizado para $item_name: $value moedas"
 end
 
+"""
+    calculate_level(marcos::Float64) -> Int
+
+Calcula o nível de um personagem a partir da quantidade de Marcos.
+
+- `marcos`: Quantidade de Marcos (pontos de experiência).
+
+Retorna o nível correspondente (máximo 20).
+"""
 function calculate_level(marcos::Float64)
     min(20, floor(Int, marcos) + 1)
 end
 
+"""
+    marcos_to_gain(level::Int) -> Int
+
+Retorna a quantidade de Marcos a ser ganha para o próximo nível, de acordo com a configuração.
+
+- `level`: Nível atual do personagem.
+
+Retorna a quantidade de Marcos a ser adicionada.
+"""
 function marcos_to_gain(level::Int)
     marcos_por_nivel = get(get(config, "progressao", Dict()), "marcos_por_nivel", Dict())
     if level <= 4
@@ -109,6 +183,15 @@ function marcos_to_gain(level::Int)
     end
 end
 
+"""
+    format_marcos(marcos_parts::Int) -> String
+
+Formata a quantidade de partes de Marcos em uma string legível, considerando frações e níveis.
+
+- `marcos_parts`: Quantidade de partes de Marcos (1 Marco = 16 partes).
+
+Retorna uma string formatada para exibição ao usuário.
+"""
 function format_marcos(marcos_parts::Int)
     full_marcos = div(marcos_parts, 16)
     remaining_parts = mod(marcos_parts, 16)
@@ -130,6 +213,19 @@ function format_marcos(marcos_parts::Int)
     end
 end
 
+"""
+    check_permissions(member::Ekztazy.Member, character::Union{String, Nothing}, permission_type::String, server_data::Dict, allow_owner::Bool=true) -> Bool
+
+Verifica se o membro possui permissão para executar determinada ação, considerando dono do personagem, administrador ou cargo especial.
+
+- `member`: Membro do Discord.
+- `character`: Nome do personagem (ou `nothing`).
+- `permission_type`: Tipo de permissão ("marcos", "saldo", "loja", etc).
+- `server_data`: Dados do servidor.
+- `allow_owner`: Se `true`, permite que o dono do personagem execute a ação.
+
+Retorna `true` se permitido, `false` caso contrário.
+"""
 function check_permissions(member::Ekztazy.Member, character::Union{String, Nothing}, permission_type::String, server_data::Dict, allow_owner::Bool=true)
     user_id = string(member.user.id)
     is_owner = !isnothing(character) && haskey(get(server_data["characters"], user_id, Dict()), character)
@@ -138,6 +234,16 @@ function check_permissions(member::Ekztazy.Member, character::Union{String, Noth
     return allow_owner ? (is_owner || is_admin || has_special_role) : (is_admin || has_special_role)
 end
 
+"""
+    get_tier(nivel::Int, server_data::Dict) -> Union{String, Nothing}
+
+Obtém o nome do tier correspondente ao nível informado, de acordo com a configuração do servidor.
+
+- `nivel`: Nível do personagem.
+- `server_data`: Dados do servidor.
+
+Retorna o nome do tier ou `nothing` se não houver correspondência.
+"""
 function get_tier(nivel::Int, server_data::Dict)
     for (tier_name, tier_data) in get(server_data, "tiers", Dict())
         if tier_data["nivel_min"] <= nivel && nivel <= tier_data["nivel_max"]
@@ -147,10 +253,19 @@ function get_tier(nivel::Int, server_data::Dict)
     return nothing
 end
 
+"""
+    wait_for_message(ctx) -> Union{String, Nothing}
+
+Aguarda a resposta do usuário no canal do contexto, com timeout de 30 segundos.
+
+- `ctx`: Contexto da interação.
+
+Retorna o conteúdo da mensagem respondida ou `nothing` em caso de timeout.
+"""
 function wait_for_message(ctx)
-    future = wait_for(ctx.client, :MessageCreate; 
-                      check=(event_ctx) -> event_ctx.author.id == ctx.interaction.member.user.id && 
-                                           event_ctx.channel_id == ctx.interaction.channel_id, 
+    future = wait_for(ctx.client, :MessageCreate;
+                      check=(event_ctx) -> event_ctx.author.id == ctx.interaction.member.user.id &&
+                                           event_ctx.channel_id == ctx.interaction.channel_id,
                       timeout=30)
     if future === nothing
         reply(ctx.client, ctx, content="Tempo esgotado para responder.")
@@ -159,7 +274,51 @@ function wait_for_message(ctx)
         return future.message.content
     end
 end
+"""
+    criar_command_handler(ctx)
 
+Handler do comando /criar. Cria um novo personagem para o usuário a partir do nome fornecido.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da criação.
+"""
+function criar_command_handler(ctx)
+    @info "Comando /criar foi acionado"
+
+    options = ctx.interaction.data.options
+
+    if isnothing(options) || isempty(options)
+        return reply(client, ctx, content="Por favor, forneça um nome para o personagem.")
+    end
+
+    nome = options[1].value
+    server_id = string(ctx.interaction.guild_id)
+    user_id = string(ctx.interaction.member.user.id)
+
+    resultado = criar_personagem(server_id, user_id, nome)
+    
+    reply(client, ctx, content=resultado)
+    @info "Resultado da criação do personagem: $resultado"
+end
+
+"""
+    ajuda_command_handler(ctx)
+
+Handler do comando /ajuda. Exibe a mensagem de ajuda com a lista de comandos disponíveis.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com a mensagem de ajuda.
+"""
+function ajuda_command_handler(ctx)
+    @info "Comando /ajuda foi acionado"
+    mensagem_ajuda = gerar_mensagem_ajuda()
+    reply(client, ctx, content=mensagem_ajuda)
+    @info "Resposta de ajuda enviada com sucesso"
+end
+
+function get_item_description(server_data::Dict, item_name::String)
 function get_item_description(server_data::Dict, item_name::String)
     for (_, rarity_items) in get(server_data, "stock_items", Dict())
         if item_name in get(rarity_items, "Name", [])
@@ -170,23 +329,7 @@ function get_item_description(server_data::Dict, item_name::String)
     return "Descrição não disponível."
 end
 
-function criar_personagem(server_id::String, user_id::String, nome::String)
-    server_data = load_server_data(server_id)
-
-    limite_personagens = get(get(config, "limites", Dict()), "personagens_por_usuario", 2)
-    user_characters = get(server_data["characters"], user_id, Dict())
-
-    if length(user_characters) >= limite_personagens
-        return "Você já possui $limite_personagens personagens. Não é possível criar mais."
-    end
-
-    if haskey(user_characters, nome)
-        return "Você já tem um personagem com o nome $nome. Por favor, escolha outro nome."
-    end
-
-    new_character = Dict(
-        "marcos" => 0,
-        "inventory" => [],
+# Função duplicada removida: criar_personagem
         "dinheiro" => 0,
         "nivel" => 1,
         "last_work_time" => nothing,
@@ -253,6 +396,15 @@ function ajuda_command_handler(ctx)
     @info "Resposta de ajuda enviada com sucesso"
 end
 
+"""
+    up_command_handler(ctx)
+
+Handler do comando /up. Adiciona Marcos ao personagem informado, atualizando o nível se necessário.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da operação.
+"""
 function up_command_handler(ctx)
     @info "Comando /up foi acionado"
 
@@ -302,6 +454,15 @@ function up_command_handler(ctx)
     end
 end
 
+"""
+    marcos_command_handler(ctx)
+
+Handler do comando /marcos. Exibe a quantidade de Marcos e o nível do personagem informado.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com a quantidade de Marcos e nível.
+"""
 function marcos_command_handler(ctx)
     @info "Comando /marcos foi acionado"
 
@@ -334,6 +495,15 @@ function marcos_command_handler(ctx)
     end
 end
 
+"""
+    mochila_command_handler(ctx)
+
+Handler do comando /mochila. Exibe o inventário do personagem informado, ou a descrição de um item específico.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com a lista de itens ou descrição detalhada.
+"""
 function mochila_command_handler(ctx)
     @info "Comando /mochila foi acionado"
 
@@ -381,6 +551,15 @@ function mochila_command_handler(ctx)
     end
 end
 
+"""
+    comprar_command_handler(ctx)
+
+Handler do comando /comprar. Permite que um personagem compre um item da loja, descontando o valor e atualizando o estoque.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da compra.
+"""
 function comprar_command_handler(ctx)
     @info "Comando /comprar foi acionado"
 
@@ -441,6 +620,15 @@ function comprar_command_handler(ctx)
     end
 end
 
+"""
+    dinheiro_command_handler(ctx)
+
+Handler do comando /dinheiro. Adiciona ou remove dinheiro do saldo de um personagem.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o novo saldo ou mensagem de erro.
+"""
 function dinheiro_command_handler(ctx)
     @info "Comando /dinheiro foi acionado"
 
@@ -481,6 +669,15 @@ function dinheiro_command_handler(ctx)
     end
 end
 
+"""
+    saldo_command_handler(ctx)
+
+Handler do comando /saldo. Exibe o saldo de moedas do personagem informado.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o saldo do personagem.
+"""
 function saldo_command_handler(ctx)
     @info "Comando /saldo foi acionado"
 
@@ -508,6 +705,15 @@ function saldo_command_handler(ctx)
     end
 end
 
+"""
+    pix_command_handler(ctx)
+
+Handler do comando /pix. Transfere moedas de um personagem para outro, validando saldo e restrições.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da transferência.
+"""
 function pix_command_handler(ctx)
     @info "Comando /pix foi acionado"
 
@@ -565,6 +771,24 @@ function pix_command_handler(ctx)
     reply(client, ctx, content="Transferência realizada com sucesso!\n$from_character enviou $amount moedas para $to_character.\nNovo saldo de $from_character: $(sender_data["dinheiro"]) moedas.")
 end
 
+"""
+    trabalhar_command_handler(ctx)
+
+Handler do comando /trabalhar. Permite que o personagem trabalhe para ganhar moedas, respeitando limites de tempo e tiers.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com a recompensa do trabalho ou mensagem de erro.
+"""
+"""
+    trabalhar_command_handler(ctx)
+
+Handler do comando /trabalhar. Permite que o personagem trabalhe para ganhar moedas, respeitando limites de tempo e tiers.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com a recompensa do trabalho ou mensagem de erro.
+"""
 function trabalhar_command_handler(ctx)
     @info "Comando /trabalhar foi acionado"
 
@@ -616,6 +840,15 @@ function trabalhar_command_handler(ctx)
     reply(client, ctx, content="$mensagem\nVocê ganhou $recompensa moedas. Saldo atual: $(character_data["dinheiro"]) moedas.")
 end
 
+"""
+    crime_command_handler(ctx)
+
+Handler do comando /crime. Permite que o personagem tente cometer um crime para ganhar ou perder moedas, respeitando limites e probabilidades.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado do crime.
+"""
 function crime_command_handler(ctx)
     @info "Comando /crime foi acionado"
 
@@ -674,6 +907,15 @@ function crime_command_handler(ctx)
     reply(client, ctx, content="$mensagem\n$resultado\nSaldo atual: $(character_data["dinheiro"]) moedas.")
 end
 
+"""
+    cargos_command_handler(ctx)
+
+Handler do comando /cargos. Gerencia cargos especiais para permissões de saldo, marcos e loja.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da operação de cargos.
+"""
 function cargos_command_handler(ctx)
     @info "Comando /cargos foi acionado"
 
@@ -734,6 +976,15 @@ function cargos_command_handler(ctx)
     @info "Comando cargos concluído. Dados atualizados: $(server_data["special_roles"])"
 end
 
+"""
+    estoque_command_handler(ctx)
+
+Handler do comando /estoque. Gerencia o estoque da loja, permitindo abastecimento e definição de preços.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da operação de estoque.
+"""
 function estoque_command_handler(ctx)
     @info "Comando /estoque foi acionado"
 
@@ -831,6 +1082,15 @@ function estoque_command_handler(ctx)
     reply(client, ctx, content="Estoque atualizado com sucesso e valores salvos!")
 end
 
+"""
+    loja_command_handler(ctx)
+
+Handler do comando /loja. Exibe os itens disponíveis na loja para o personagem selecionado.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com a lista de itens da loja e saldo do personagem.
+"""
 function loja_command_handler(ctx)
     @info "Comando /loja foi acionado"
 
@@ -892,6 +1152,33 @@ function loja_command_handler(ctx)
     reply(client, ctx, content="Seu dinheiro: $(user_characters[selected_character]["dinheiro"]) moedas")
 end
 
+"""
+    inserir_command_handler(ctx)
+
+Handler do comando /inserir. Permite inserir um novo item no estoque da loja, definindo raridade, quantidade e valor.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da operação de inserção.
+"""
+"""
+    inserir_command_handler(ctx)
+
+Handler do comando /inserir. Permite inserir um novo item no estoque da loja, definindo raridade, quantidade e valor.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da operação de inserção.
+"""
+"""
+    inserir_command_handler(ctx)
+
+Handler do comando /inserir. Permite inserir um novo item no estoque da loja, definindo raridade, quantidade e valor.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da operação de inserção.
+"""
 function inserir_command_handler(ctx)
     @info "Comando /inserir foi acionado"
 
@@ -950,6 +1237,15 @@ function inserir_command_handler(ctx)
     reply(client, ctx, content="Item '$item' inserido no estoque com sucesso.")
 end
 
+"""
+    remover_command_handler(ctx)
+
+Handler do comando /remover. Permite remover um item do estoque da loja, parcial ou totalmente.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário com o resultado da operação de remoção.
+"""
 function remover_command_handler(ctx)
     @info "Comando /remover foi acionado"
 
@@ -993,6 +1289,24 @@ function remover_command_handler(ctx)
     save_server_data(server_id, server_data)
 end
 
+"""
+    limpar_estoque_command_handler(ctx)
+
+Handler do comando /limpar_estoque. Limpa completamente o estoque da loja do servidor.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário confirmando a limpeza do estoque.
+"""
+"""
+    limpar_estoque_command_handler(ctx)
+
+Handler do comando /limpar_estoque. Limpa completamente o estoque da loja do servidor.
+
+- `ctx`: Contexto da interação Discord.
+
+Responde ao usuário confirmando a limpeza do estoque.
+"""
 function limpar_estoque_command_handler(ctx)
     @info "Comando /limpar_estoque foi acionado"
 
