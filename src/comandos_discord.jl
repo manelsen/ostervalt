@@ -1,210 +1,197 @@
-module ComandosDiscord
+# Handlers dos comandos Discord
+# Este arquivo é incluído diretamente no módulo OstervaltBot.
 
-using Ekztazy, Dates, Random, Logging # Assumindo dependências básicas, podem precisar de ajuste
+using Ekztazy, Dates, Random, Logging, CSV, DataFrames, JSON3 # Bibliotecas externas necessárias pelos handlers
 
-# Funções auxiliares (precisarão ser importadas de outros módulos futuramente)
-# Exemplo: using ..LogicaJogo: calcular_nivel, formatar_marcos, marcos_para_ganhar
-# Exemplo: using ..Persistencia: carregar_dados_servidor, salvar_dados_servidor, atualizar_preco_item
-# Exemplo: using ..Utils: verificar_permissoes, obter_tier, aguardar_mensagem, obter_descricao_item
-# Exemplo: using ..Personagens: criar_personagem
-# Exemplo: using ..Config: config # Ou passar config como argumento
-
-export handler_comando_criar, handler_comando_ajuda, handler_comando_up, handler_comando_marcos,
-       handler_comando_mochila, handler_comando_comprar, handler_comando_dinheiro, handler_comando_saldo,
-       handler_comando_pix, handler_comando_trabalhar, handler_comando_crime, handler_comando_cargos,
-       handler_comando_estoque, handler_comando_loja, handler_comando_inserir, handler_comando_remover,
-       limpar_handler_comando_estoque, backhandler_comando_up, handler_comando_mensagens,
-       handler_comando_tiers, prob_handler_comando_crime, handler_comando_rip, handler_comando_inss
+# Imports relativos/absolutos removidos, pois as funções/constantes estarão no mesmo escopo (OstervaltBot)
+# Não precisa de export aqui
 
 # === Handlers Extraídos de ostervalt.jl ===
 
 """
     handler_comando_criar(contexto)
 
-Handler do comando /criar. Cria um novo personagem para o usuário a partir do nome fornecido.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da criação.
+Handler do comando `/criar`. Cria um novo personagem para o usuário que invocou o comando.
 """
 function handler_comando_criar(contexto)
-    @info "Comando /criar foi acionado"
-
+    @info "Comando /criar foi acionado por $(contexto.interaction.membro.user.username)"
     opcoes = contexto.interaction.data.opcoes
 
     if isnothing(opcoes) || isempty(opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça um nome para o personagem.") # Assumindo 'cliente' global ou importado
+        return reply(cliente, contexto, content="Por favor, forneça um nome para o personagem.")
     end
 
     nome = opcoes[1].value
     id_servidor = string(contexto.interaction.id_guilda)
     id_usuario = string(contexto.interaction.membro.user.id)
 
-    resultado = criar_personagem(id_servidor, id_usuario, nome) # Dependência externa
+    # Chama a lógica de criação (agora no mesmo escopo OstervaltBot)
+    resultado = criar_personagem(id_servidor, id_usuario, nome)
 
-    reply(cliente, contexto, content=resultado) # Assumindo 'cliente' global ou importado
-    @info "Resultado da criação do personagem: $resultado"
+    reply(cliente, contexto, content=resultado)
+    @info "Resultado da criação do personagem para $id_usuario: $resultado"
 end
 
 """
     handler_comando_ajuda(contexto)
 
-Handler do comando /ajuda. Exibe a mensagem de ajuda com a lista de comandos disponíveis.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com a mensagem de ajuda.
+Handler do comando `/ajuda`. Exibe uma mensagem de ajuda formatada.
 """
 function handler_comando_ajuda(contexto)
-    @info "Comando /ajuda foi acionado"
-    mensagem_ajuda = gerar_mensagem_ajuda() # Dependência externa
-    reply(cliente, contexto, content=mensagem_ajuda) # Assumindo 'cliente' global ou importado
-    @info "Resposta de ajuda enviada com sucesso"
+    @info "Comando /ajuda foi acionado por $(contexto.interaction.membro.user.username)"
+    mensagem_ajuda = gerar_mensagem_ajuda() # Função no mesmo escopo
+    reply(cliente, contexto, content=mensagem_ajuda)
+    @info "Mensagem de ajuda enviada."
 end
 
 """
     handler_comando_up(contexto)
 
-Handler do comando /up. Adiciona Marcos ao personagem informado, atualizando o nível se necessário.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da operação.
+Handler do comando `/up`. Adiciona Marcos (XP) a um personagem especificado.
 """
 function handler_comando_up(contexto)
-    @info "Comando /up foi acionado"
-
+    @info "Comando /up foi acionado por $(contexto.interaction.membro.user.username)"
     if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.")
     end
 
     personagem = contexto.interaction.data.opcoes[1].value
     id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
+    dados_servidor = carregar_dados_servidor(id_servidor) # Função no mesmo escopo
 
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "marcos", dados_servidor, false) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "dinheiro_permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config)
+    # Verifica permissão (não permite dono, apenas admin ou cargo especial "marcos")
+    if !verificar_permissoes(contexto.interaction.membro, personagem, "marcos", dados_servidor, false) # Função no mesmo escopo
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict()) # 'config' no mesmo escopo
+        return reply(cliente, contexto, content=get(msg_erro, "dinheiro_permissao", "Você não tem permissão para usar este comando."))
     end
 
     personagem_encontrado = false
-    for (id_usuario, personagems) in dados_servidor["personagens"]
-        if haskey(personagems, personagem)
-            dados_personagem = personagems[personagem]
+    for (id_usuario_dono, personagens_dono) in dados_servidor["personagens"]
+        if haskey(personagens_dono, personagem)
+            dados_personagem = personagens_dono[personagem]
             nivel_atual = dados_personagem["nivel"]
-            marcos_a_adicionar = marcos_para_ganhar(nivel_atual) # Dependência externa
+            marcos_a_adicionar = marcos_para_ganhar(nivel_atual) # Função no mesmo escopo
 
             dados_personagem["marcos"] += marcos_a_adicionar
             novos_marcos = dados_personagem["marcos"]
-            novo_nivel = calcular_nivel(novos_marcos / 16) # Dependência externa
+            novo_nivel = calcular_nivel(novos_marcos / 16.0) # Função no mesmo escopo
 
             if novo_nivel > nivel_atual
                 dados_personagem["nivel"] = novo_nivel
-                reply(cliente, contexto, content="$personagem subiu para o nível $novo_nivel!") # Assumindo 'cliente'
+                reply(cliente, contexto, content="$personagem subiu para o nível $novo_nivel!")
             else
-                fracao_adicionada = marcos_a_adicionar == 4 ? "1/4 de Marco" :
+                fracao_adicionada = marcos_a_adicionar == 16 ? "1 Marco" :
+                                 marcos_a_adicionar == 4 ? "1/4 de Marco" :
                                  marcos_a_adicionar == 2 ? "1/8 de Marco" :
                                  marcos_a_adicionar == 1 ? "1/16 de Marco" :
-                                 "$marcos_a_adicionar Marcos"
+                                 "$marcos_a_adicionar partes de Marco"
 
-                reply(cliente, contexto, content="Adicionado $fracao_adicionada para $personagem. Total: $(formatar_marcos(novos_marcos)) (Nível $novo_nivel)") # Dependência externa (formatar_marcos), Assumindo 'cliente'
+                reply(cliente, contexto, content="Adicionado $fracao_adicionada para $personagem. Total: $(formatar_marcos(novos_marcos)) (Nível $novo_nivel)") # Função no mesmo escopo
             end
 
-            salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
+            salvar_dados_servidor(id_servidor, dados_servidor) # Função no mesmo escopo
             personagem_encontrado = true
+            @info "Marcos adicionados para $personagem por $(contexto.interaction.membro.user.username). Novo nível: $novo_nivel"
             break
         end
     end
 
     if !personagem_encontrado
-        reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Personagem não encontrado."))
     end
 end
 
 """
     handler_comando_marcos(contexto)
 
-Handler do comando /marcos. Exibe a quantidade de Marcos e o nível do personagem informado.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com a quantidade de Marcos e nível.
+Handler do comando `/marcos`. Exibe os Marcos e o nível de um personagem.
 """
 function handler_comando_marcos(contexto)
-    @info "Comando /marcos foi acionado"
-
+    @info "Comando /marcos foi acionado por $(contexto.interaction.membro.user.username)"
     if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.")
     end
 
     personagem = contexto.interaction.data.opcoes[1].value
     id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
+    dados_servidor = carregar_dados_servidor(id_servidor)
 
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "marcos", dados_servidor, false) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "dinheiro_permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
+    if !verificar_permissoes(contexto.interaction.membro, personagem, "marcos", dados_servidor, false)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "dinheiro_permissao", "Você não tem permissão para usar este comando."))
     end
 
     personagem_encontrado = false
-    for (id_usuario, personagems) in dados_servidor["personagens"]
-        if haskey(personagems, personagem)
-            dados_personagem = personagems[personagem]
+    for (id_usuario_dono, personagens_dono) in dados_servidor["personagens"]
+        if haskey(personagens_dono, personagem)
+            dados_personagem = personagens_dono[personagem]
             marcos = dados_personagem["marcos"]
-            level = calcular_nivel(marcos / 16) # Dependência externa
-            reply(cliente, contexto, content="$personagem tem $(formatar_marcos(marcos)) (Nível $level)") # Dependência externa (formatar_marcos), Assumindo 'cliente'
+            level = calcular_nivel(marcos / 16.0)
+            reply(cliente, contexto, content="$personagem tem $(formatar_marcos(marcos)) (Nível $level)")
             personagem_encontrado = true
             break
         end
     end
 
     if !personagem_encontrado
-        reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Personagem não encontrado."))
     end
 end
 
 """
     handler_comando_mochila(contexto)
 
-Handler do comando /mochila. Exibe o inventário do personagem informado, ou a descrição de um item específico.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com a lista de itens ou descrição detalhada.
+Handler do comando `/mochila`. Exibe o inventário de um personagem ou a descrição de um item específico.
 """
 function handler_comando_mochila(contexto)
-    @info "Comando /mochila foi acionado"
-
+    @info "Comando /mochila foi acionado por $(contexto.interaction.membro.user.username)"
     if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.")
     end
 
     personagem = contexto.interaction.data.opcoes[1].value
     item = length(contexto.interaction.data.opcoes) > 1 ? contexto.interaction.data.opcoes[2].value : nothing
 
     id_servidor = string(contexto.interaction.id_guilda)
-    id_usuario = string(contexto.interaction.membro.user.id)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
+    id_usuario_invocador = string(contexto.interaction.membro.user.id)
+    dados_servidor = carregar_dados_servidor(id_servidor)
 
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
+    id_usuario_dono = nothing
+    dados_personagem = nothing
+    personagem_encontrado = false
+    for (id_dono, personagens_dono) in dados_servidor["personagens"]
+        if haskey(personagens_dono, personagem)
+            id_usuario_dono = id_dono
+            dados_personagem = personagens_dono[personagem]
+            personagem_encontrado = true
+            break
+        end
     end
 
-    dados_personagem = get(get(dados_servidor["personagens"], id_usuario, Dict()), personagem, nothing)
-    if isnothing(dados_personagem) # Corrigido: personagem_dados -> dados_personagem
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
+    if !personagem_encontrado
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Personagem não encontrado."))
+    end
+
+    if !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true)
+         msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você não tem permissão para ver esta mochila."))
     end
 
     inventory = get(dados_personagem, "inventario", [])
     if isempty(inventory)
-        return reply(cliente, contexto, content="O inventário de $personagem está vazio.") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="O inventário de $personagem está vazio.")
     end
 
     if !isnothing(item)
         if item in inventory
             contagem_item = count(==(item), inventory)
-            descricao_item = obter_descricao_item(dados_servidor, item) # Dependência externa
-            reply(cliente, contexto, content="**$item** (x$contagem_item)\nDescrição: $descricao_item") # Assumindo 'cliente'
+            descricao_item = obter_descricao_item(dados_servidor, item) # Função no mesmo escopo
+            reply(cliente, contexto, content="**$item** (x$contagem_item)\nDescrição: $descricao_item")
         else
-            reply(cliente, contexto, content="O item '$item' não está na mochila de $personagem.") # Assumindo 'cliente'
+            reply(cliente, contexto, content="O item '$item' não está na mochila de $personagem.")
         end
     else
         contagem_itens = Dict{String, Int}()
@@ -212,995 +199,1124 @@ function handler_comando_mochila(contexto)
             contagem_itens[i] = get(contagem_itens, i, 0) + 1
         end
 
-        items_formatted = join(["**$item** (x$count)" for (item, count) in contagem_itens], ", ")
-        reply(cliente, contexto, content="Inventário de $personagem: $items_formatted") # Assumindo 'cliente'
+        items_formatted = isempty(contagem_itens) ? "vazio" : join(["**$item_nome** (x$count)" for (item_nome, count) in contagem_itens], ", ")
+        reply(cliente, contexto, content="Inventário de $personagem: $items_formatted")
     end
 end
 
 """
     handler_comando_comprar(contexto)
 
-Handler do comando /comprar. Permite que um personagem compre um item da loja, descontando o valor e atualizando o estoque.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da compra.
+Handler do comando `/comprar`. Permite que um personagem compre um item da loja.
 """
 function handler_comando_comprar(contexto)
-    @info "Comando /comprar foi acionado"
-
+    @info "Comando /comprar foi acionado por $(contexto.interaction.membro.user.username)"
     if length(contexto.interaction.data.opcoes) < 2
-        return reply(cliente, contexto, content="Uso incorreto. Use: /comprar <personagem> <item>") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="Uso incorreto. Use: /comprar <personagem> <item>")
     end
 
     personagem = contexto.interaction.data.opcoes[1].value
-    item = contexto.interaction.data.opcoes[2].value
+    item_comprar = contexto.interaction.data.opcoes[2].value
 
     id_servidor = string(contexto.interaction.id_guilda)
     id_usuario = string(contexto.interaction.membro.user.id)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
+    dados_servidor = carregar_dados_servidor(id_servidor)
 
     personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
     if !haskey(personagens_usuario, personagem)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Você não possui um personagem com este nome."))
     end
 
-    if isempty(get(dados_servidor, "itens_estoque", Dict()))
-        return reply(cliente, contexto, content="A loja está vazia. Um administrador precisa usar o comando /estoque para abastecê-la.") # Assumindo 'cliente'
+    itens_estoque = get(dados_servidor, "itens_estoque", Dict())
+    if isempty(itens_estoque)
+        return reply(cliente, contexto, content="A loja está vazia. Um administrador precisa usar o comando /estoque para abastecê-la.")
     end
 
     dados_personagem = personagens_usuario[personagem]
-    item_found = false
-    for (raridade, itens) in dados_servidor["itens_estoque"] # Corrigido: items -> itens
-        if item in itens["Name"]
-            indice_item = findfirst(==(item), itens["Name"]) # Corrigido: items -> itens
-            if itens["Quantity"][indice_item] > 0 # Corrigido: items -> itens
-                valor_item = parse(Int, itens["Value"][indice_item]) # Corrigido: items -> itens
+    item_encontrado_loja = false
+    compra_realizada = false
 
-                if dados_personagem["dinheiro"] < valor_item
-                    return reply(cliente, contexto, content="$personagem não tem dinheiro suficiente para comprar $item. Preço: $valor_item, Dinheiro disponível: $(dados_personagem["dinheiro"])") # Assumindo 'cliente'
+    for (raridade, itens_raridade) in itens_estoque
+        nomes_itens = get(itens_raridade, "Name", [])
+        if item_comprar in nomes_itens
+            item_encontrado_loja = true
+            indice_item = findfirst(==(item_comprar), nomes_itens)
+
+            if !isnothing(indice_item) && itens_raridade["Quantity"][indice_item] > 0
+                valor_item_str = itens_raridade["Value"][indice_item]
+                valor_item = tryparse(Int, valor_item_str)
+
+                if isnothing(valor_item)
+                     @error "Valor inválido para o item '$item_comprar' na loja: $valor_item_str"
+                     reply(cliente, contexto, content="Erro interno ao processar o preço do item. Contate um administrador.")
+                     break
                 end
 
-                dados_personagem["dinheiro"] -= valor_item
-                push!(dados_personagem["inventario"], item)
+                if dados_personagem["dinheiro"] < valor_item
+                    reply(cliente, contexto, content="$personagem não tem dinheiro suficiente para comprar $item_comprar. Preço: $valor_item, Dinheiro disponível: $(dados_personagem["dinheiro"])")
+                else
+                    dados_personagem["dinheiro"] -= valor_item
+                    push!(dados_personagem["inventario"], item_comprar)
+                    itens_raridade["Quantity"][indice_item] -= 1
 
-                itens["Quantity"][indice_item] -= 1 # Corrigido: items -> itens
-
-                reply(cliente, contexto, content="$personagem comprou $item por $valor_item moedas. Dinheiro restante: $(dados_personagem["dinheiro"])") # Assumindo 'cliente'
-                salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-                item_found = true
+                    reply(cliente, contexto, content="$personagem comprou $item_comprar por $valor_item moedas. Dinheiro restante: $(dados_personagem["dinheiro"])")
+                    salvar_dados_servidor(id_servidor, dados_servidor)
+                    compra_realizada = true
+                    @info "$personagem (User: $id_usuario) comprou $item_comprar."
+                end
             else
-                reply(cliente, contexto, content="Desculpe, $item está fora de estoque.") # Assumindo 'cliente'
-                item_found = true
+                reply(cliente, contexto, content="Desculpe, $item_comprar está fora de estoque.")
             end
             break
         end
     end
 
-    if !item_found
-        reply(cliente, contexto, content="Item '$item' não encontrado na loja.") # Assumindo 'cliente'
+    if !item_encontrado_loja
+        reply(cliente, contexto, content="Item '$item_comprar' não encontrado na loja.")
     end
 end
+
 
 """
     handler_comando_dinheiro(contexto)
 
-Handler do comando /dinheiro. Adiciona ou remove dinheiro do saldo de um personagem.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o novo saldo ou mensagem de erro.
+Handler do comando `/dinheiro`. Adiciona ou remove dinheiro do saldo de um personagem.
 """
 function handler_comando_dinheiro(contexto)
-    @info "Comando /dinheiro foi acionado"
-
+    @info "Comando /dinheiro foi acionado por $(contexto.interaction.membro.user.username)"
     if length(contexto.interaction.data.opcoes) < 2
-        return reply(cliente, contexto, content="Uso incorreto. Use: /dinheiro <personagem> <quantidade>") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="Uso incorreto. Use: /dinheiro <personagem> <quantidade>")
     end
 
     personagem = contexto.interaction.data.opcoes[1].value
-    quantidade = parse(Int, contexto.interaction.data.opcoes[2].value)
+    quantidade_str = contexto.interaction.data.opcoes[2].value
+    quantidade = tryparse(Int, quantidade_str)
+
+    if isnothing(quantidade)
+        return reply(cliente, contexto, content="Quantidade inválida. Por favor, forneça um número inteiro.")
+    end
 
     id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
+    dados_servidor = carregar_dados_servidor(id_servidor)
 
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "saldo", dados_servidor, false) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "dinheiro_permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
+    if !verificar_permissoes(contexto.interaction.membro, personagem, "saldo", dados_servidor, false)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "dinheiro_permissao", "Você não tem permissão para usar este comando."))
     end
 
     personagem_encontrado = false
-    for (id_usuario, personagems) in dados_servidor["personagens"]
-        if haskey(personagems, personagem)
-            dados_personagem = personagems[personagem]
-            dados_personagem["dinheiro"] += quantidade # Corrigido: amount -> quantidade
+    for (id_usuario_dono, personagens_dono) in dados_servidor["personagens"]
+        if haskey(personagens_dono, personagem)
+            dados_personagem = personagens_dono[personagem]
+            saldo_anterior = dados_personagem["dinheiro"]
+            dados_personagem["dinheiro"] = max(0, saldo_anterior + quantidade)
 
             if quantidade > 0
-                reply(cliente, contexto, content="Adicionado $quantidade moedas ao saldo de $personagem. Novo saldo: $(dados_personagem["dinheiro"]) moedas.") # Assumindo 'cliente'
+                reply(cliente, contexto, content="Adicionado $quantidade moedas ao saldo de $personagem. Novo saldo: $(dados_personagem["dinheiro"]) moedas.")
+            elseif quantidade < 0
+                 dinheiro_removido = min(saldo_anterior, abs(quantidade))
+                 reply(cliente, contexto, content="Removido $dinheiro_removido moedas do saldo de $personagem. Novo saldo: $(dados_personagem["dinheiro"]) moedas.")
             else
-                reply(cliente, contexto, content="Removido $(abs(quantidade)) moedas do saldo de $personagem. Novo saldo: $(dados_personagem["dinheiro"]) moedas.") # Assumindo 'cliente'
+                 reply(cliente, contexto, content="Nenhuma alteração no saldo de $personagem. Saldo atual: $(dados_personagem["dinheiro"]) moedas.")
             end
 
-            salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
+            salvar_dados_servidor(id_servidor, dados_servidor)
             personagem_encontrado = true
+            @info "Saldo de $personagem alterado em $quantidade por $(contexto.interaction.membro.user.username). Novo saldo: $(dados_personagem["dinheiro"])"
             break
         end
     end
 
     if !personagem_encontrado
-        reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Personagem não encontrado."))
     end
 end
 
 """
     handler_comando_saldo(contexto)
 
-Handler do comando /saldo. Exibe o saldo de moedas do personagem informado.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o saldo do personagem.
+Handler do comando `/saldo`. Exibe o saldo de moedas de um personagem.
 """
 function handler_comando_saldo(contexto)
-    @info "Comando /saldo foi acionado"
-
+    @info "Comando /saldo foi acionado por $(contexto.interaction.membro.user.username)"
     if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.")
     end
 
     personagem = contexto.interaction.data.opcoes[1].value
     id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    id_usuario = string(contexto.interaction.membro.user.id)
-    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
-
-    if haskey(personagens_usuario, personagem)
-        dados_personagem = personagens_usuario[personagem]
-        money = get(dados_personagem, "dinheiro", 0)
-        reply(cliente, contexto, content="$personagem tem $money moedas.") # Assumindo 'cliente'
-    else
-        reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-end
-
-"""
-    handler_comando_pix(contexto)
-
-Handler do comando /pix. Transfere moedas de um personagem para outro, validando saldo e restrições.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da transferência.
-"""
-function handler_comando_pix(contexto)
-    @info "Comando /pix foi acionado"
-
-    if length(contexto.interaction.data.opcoes) < 3
-        return reply(cliente, contexto, content="Uso incorreto. Use: /pix <de_personagem> <para_personagem> <quantidade>") # Assumindo 'cliente'
-    end
-
-    personagem_origem = contexto.interaction.data.opcoes[1].value
-    personagem_destino = contexto.interaction.data.opcoes[2].value
-    quantidade = parse(Int, contexto.interaction.data.opcoes[3].value)
-
-    if quantidade <= 0
-        return reply(cliente, contexto, content="A quantidade deve ser maior que zero.") # Assumindo 'cliente'
-    end
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    id_usuario = string(contexto.interaction.membro.user.id)
-    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
-
-    if !haskey(personagens_usuario, personagem_origem)
-        return reply(cliente, contexto, content="Você não possui um personagem chamado $personagem_origem.") # Assumindo 'cliente'
-    end
-
-    if any(char -> char == personagem_destino, keys(personagens_usuario))
-        return reply(cliente, contexto, content="Não é possível transferir moedas para um de seus próprios personagens.") # Assumindo 'cliente'
-    end
-
-    destinatario_encontrado = false
-    dados_destinatario = nothing
-    for (id_usuario_recipient, personagems) in dados_servidor["personagens"]
-        if haskey(personagems, personagem_destino) && id_usuario_recipient != id_usuario
-            dados_destinatario = personagems[personagem_destino]
-            destinatario_encontrado = true
-            break
-        end
-    end
-
-    if !destinatario_encontrado
-        return reply(cliente, contexto, content="O personagem destinatário '$personagem_destino' não foi encontrado ou é de sua propriedade.") # Assumindo 'cliente'
-    end
-
-    dados_remetente = personagens_usuario[personagem_origem]
-
-    if dados_remetente["dinheiro"] < quantidade # Corrigido: amount -> quantidade
-        return reply(cliente, contexto, content="$personagem_origem não tem moedas suficientes. Saldo disponível: $(dados_remetente["dinheiro"])") # Assumindo 'cliente'
-    end
-
-    dados_remetente["dinheiro"] -= quantidade # Corrigido: amount -> quantidade
-    dados_destinatario["dinheiro"] += quantidade # Corrigido: amount -> quantidade
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-
-    reply(cliente, contexto, content="Transferência realizada com sucesso!\n$personagem_origem enviou $quantidade moedas para $personagem_destino.\nNovo saldo de $personagem_origem: $(dados_remetente["dinheiro"]) moedas.") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_trabalhar(contexto)
-
-Handler do comando /trabalhar. Permite que o personagem trabalhe para ganhar moedas, respeitando limites de tempo e tiers.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com a recompensa do trabalho ou mensagem de erro.
-"""
-function handler_comando_trabalhar(contexto)
-    @info "Comando /trabalhar foi acionado"
-
-    if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
-    end
-
-    personagem = contexto.interaction.data.opcoes[1].value
-    id_servidor = string(contexto.interaction.id_guilda)
-    id_usuario = string(contexto.interaction.membro.user.id)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
-    if !haskey(personagens_usuario, personagem)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    dados_personagem = personagens_usuario[personagem]
-
-    ultimo_trabalho = get(dados_personagem, "ultimo_trabalho", nothing)
-    now_time = Dates.now() # Corrigido: now -> now_time para evitar conflito com Dates.now
-    intervalo_trabalhar = get(get(config, "limites", Dict()), "intervalo_trabalhar", 86400) # Dependência externa (config)
-    if !isnothing(ultimo_trabalho)
-        delta = now_time - DateTime(ultimo_trabalho)
-        if Dates.value(delta) < intervalo_trabalhar * 1000
-            return reply(cliente, contexto, content=get(config["messages"]["erros"], "acao_frequente", "Você já trabalhou recentemente. Aguarde um pouco para trabalhar novamente.")) # Dependência externa (config), Assumindo 'cliente'
-        end
-    end
-
-    nivel = get(dados_personagem, "nivel", 0)
-    nome_tier = obter_tier(nivel, dados_servidor) # Dependência externa
-    if isnothing(nome_tier)
-        return reply(cliente, contexto, content="Nenhum tier definido para o seu nível. Contate um administrador.") # Assumindo 'cliente'
-    end
-
-    tier = dados_servidor["tiers"][nome_tier]
-    recompensa = tier["recompensa"]
-    dados_personagem["dinheiro"] += recompensa
-    dados_personagem["ultimo_trabalho"] = string(now_time)
-
-    mensagens = get(get(dados_servidor, "messages", Dict()), "trabalho", get(config["messages"], "trabalho", [])) # Dependência externa (config)
-    mensagem = isempty(mensagens) ? "Você trabalhou duro e ganhou sua recompensa!" : rand(mensagens)
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="$mensagem\nVocê ganhou $recompensa moedas. Saldo atual: $(dados_personagem["dinheiro"]) moedas.") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_crime(contexto)
-
-Handler do comando /crime. Permite que o personagem tente cometer um crime para ganhar ou perder moedas, respeitando limites e probabilidades.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado do crime.
-"""
-function handler_comando_crime(contexto)
-    @info "Comando /crime foi acionado"
-
-    if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
-    end
-
-    personagem = contexto.interaction.data.opcoes[1].value
-    id_servidor = string(contexto.interaction.id_guilda)
-    id_usuario = string(contexto.interaction.membro.user.id)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
-    if !haskey(personagens_usuario, personagem)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    dados_personagem = personagens_usuario[personagem]
-
-    ultimo_crime = get(dados_personagem, "ultimo_crime", nothing)
-    now_time = Dates.now() # Corrigido: now -> now_time
-    intervalo_crime = get(get(config, "limites", Dict()), "intervalo_crime", 86400) # Dependência externa (config)
-    if !isnothing(ultimo_crime)
-        delta = now_time - DateTime(ultimo_crime)
-        if Dates.value(delta) < intervalo_crime * 1000
-            return reply(cliente, contexto, content=get(config["messages"]["erros"], "acao_frequente", "Você já cometeu um crime recentemente. Aguarde um pouco para tentar novamente.")) # Dependência externa (config), Assumindo 'cliente'
-        end
-    end
-
-    probabilidade = get(dados_servidor, "probabilidade_crime", get(get(config, "probabilidades", Dict()), "crime", 50)) # Dependência externa (config)
-    chance = rand(1:100)
-
-    mensagens = get(get(dados_servidor, "messages", Dict()), "crime", get(config["messages"], "crime", [])) # Dependência externa (config)
-    mensagem = isempty(mensagens) ? "Você tentou cometer um crime..." : rand(mensagens)
-
-    if chance <= probabilidade
-        recompensa = rand(100:500)
-        dados_personagem["dinheiro"] += recompensa
-        resultado = "Sucesso! Você ganhou $recompensa moedas."
-    else
-        perda = rand(50:250)
-        dados_personagem["dinheiro"] = max(0, dados_personagem["dinheiro"] - perda)
-        resultado = "Você foi pego! Perdeu $perda moedas."
-    end
-
-    dados_personagem["ultimo_crime"] = string(now_time)
-
-    # Incrementar o atributo oculto 'estrelas'
-    dados_personagem["estrelas"] = get(dados_personagem, "estrelas", 0) + 1
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="$mensagem\n$resultado\nSaldo atual: $(dados_personagem["dinheiro"]) moedas.") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_cargos(contexto)
-
-Handler do comando /cargos. Gerencia cargos especiais para permissões de saldo, marcos e loja.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da operação de cargos.
-"""
-function handler_comando_cargos(contexto)
-    @info "Comando /cargos foi acionado"
-
-    if length(contexto.interaction.data.opcoes) < 3
-        return reply(cliente, contexto, content="Uso incorreto. Use: /cargos <tipo> <acao> <cargo>") # Assumindo 'cliente'
-    end
-
-    tipo = contexto.interaction.data.opcoes[1].value
-    acao = contexto.interaction.data.opcoes[2].value
-    nome_cargo = contexto.interaction.data.opcoes[3].value
-
-    usuario = contexto.interaction.membro # Corrigido: user -> usuario
-    servidor = contexto.interaction.id_guilda |> (t -> get_guild(cliente, t)) |> fetch |> (u -> u.val) # Assumindo 'cliente'
-    canal = contexto.interaction.channel_id |> (r -> get_channel(cliente, r)) |> fetch |> (s -> s.val) # Assumindo 'cliente'
-    permissoes = Ekztazy.permissions_in(usuario, servidor, canal) # Dependência externa (Ekztazy)
-
-    if !has_permission(permissoes, PERM_ADMINISTRATOR) # Dependência externa (Ekztazy)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !(tipo in ["saldo", "marcos", "loja"])
-        return reply(cliente, contexto, content="Tipo inválido. Use 'saldo', 'marcos' ou 'loja'.") # Assumindo 'cliente'
-    end
-
-    if !(acao in ["add", "remove"])
-        return reply(cliente, contexto, content="Ação inválida. Use 'add' ou 'remove'.") # Assumindo 'cliente'
-    end
-
-    cargo = findfirst(r -> lowercase(r.name) == lowercase(nome_cargo), servidor.roles) # Corrigido: guild -> servidor
-    if isnothing(cargo)
-        return reply(cliente, contexto, content="Cargo não encontrado.") # Assumindo 'cliente'
-    end
-
-    if !haskey(dados_servidor["special_roles"], tipo)
-        dados_servidor["special_roles"][tipo] = UInt64[]
-    end
-
-    if acao == "add"
-        if !(cargo.id in dados_servidor["special_roles"][tipo])
-            push!(dados_servidor["special_roles"][tipo], cargo.id)
-            reply(cliente, contexto, content="Cargo $(cargo.name) adicionado às permissões de $tipo.") # Assumindo 'cliente'
-        else
-            reply(cliente, contexto, content="Cargo $(cargo.name) já está nas permissões de $tipo.") # Assumindo 'cliente'
-        end
-    elseif acao == "remove"
-        if cargo.id in dados_servidor["special_roles"][tipo]
-            filter!(id -> id != cargo.id, dados_servidor["special_roles"][tipo])
-            reply(cliente, contexto, content="Cargo $(cargo.name) removido das permissões de $tipo.") # Assumindo 'cliente'
-        else
-            reply(cliente, contexto, content="Cargo $(cargo.name) não estava nas permissões de $tipo.") # Assumindo 'cliente'
-        end
-    end
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    @info "Comando cargos concluído. Dados atualizados: $(dados_servidor["special_roles"])"
-end
-
-"""
-    handler_comando_estoque(contexto)
-
-Handler do comando /estoque. Gerencia o estoque da loja, permitindo abastecimento e definição de preços.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da operação de estoque.
-"""
-function handler_comando_estoque(contexto)
-    @info "Comando /estoque foi acionado"
-
-    if length(contexto.interaction.data.opcoes) < 4
-        return reply(cliente, contexto, content="Uso incorreto. Use: /estoque <comum> <incomum> <raro> <muito_raro>") # Assumindo 'cliente'
-    end
-
-    comum = contexto.interaction.data.opcoes[1].value
-    uncomum = contexto.interaction.data.opcoes[2].value # Corrigido: uncommon -> uncomum
-    raro = contexto.interaction.data.opcoes[3].value
-    very_raro = contexto.interaction.data.opcoes[4].value
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    dados_servidor["itens_estoque"] = Dict()
-
-    raridades = Dict(
-        "common" => comum, # Corrigido: common -> comum
-        "uncommon" => uncomum,
-        "rare" => raro,
-        "very rare" => very_raro
-    )
-
-    csv_file = isfile("items_$(id_servidor).csv") ? "items_$(id_servidor).csv" : "items.csv"
-
-    try
-        todos_itens = CSV.read(csv_file, DataFrame) # Dependência externa (CSV, DataFrame)
-    catch
-        return reply(cliente, contexto, content="Erro: O arquivo de itens '$csv_file' não foi encontrado.") # Assumindo 'cliente'
-    end
-
-    reply(cliente, contexto, content="Criando novo estoque. Por favor, defina os preços para cada item.") # Assumindo 'cliente'
-
-    for (raridade, count) in raridades
-        itens_disponiveis = filter(row -> row.Rarity == raridade, todos_itens)
-        contagem_disponivel = nrow(itens_disponiveis) # Dependência externa (DataFrame)
-
-        if contagem_disponivel < count
-            count = contagem_disponivel
-        end
-
-        if count > 0
-            itens = itens_disponiveis[rand(1:nrow(itens_disponiveis), count), :] # Dependência externa (DataFrame)
-            dados_servidor["itens_estoque"][raridade] = Dict(
-                "Name" => itens.Name, # Corrigido: items -> itens
-                "Value" => String[],
-                "Quantity" => fill(1, count),
-                "Text" => itens.Text # Corrigido: items -> itens
-            )
-
-            for name in dados_servidor["itens_estoque"][raridade]["Name"]
-                preco_definido = false
-                attempts = 0
-                while !preco_definido && attempts < 3
-                    reply(cliente, contexto, content="Digite o preço para $name (em moedas):") # Assumindo 'cliente'
-                    resposta = aguardar_mensagem(contexto) # Dependência externa
-                    if resposta === nothing
-                        break
-                    end
-                    try
-                        preco = parse(Int, resposta)
-                        push!(dados_servidor["itens_estoque"][raridade]["Value"], string(preco)) # Corrigido: price -> preco
-                        atualizar_preco_item(id_servidor, name, string(preco)) # Dependência externa, Corrigido: price -> preco
-                        reply(cliente, contexto, content="Preço de $name definido como $preco moedas e salvo.") # Assumindo 'cliente', Corrigido: price -> preco
-                        preco_definido = true
-                    catch
-                        reply(cliente, contexto, content="Por favor, digite um número inteiro válido.") # Assumindo 'cliente'
-                        attempts += 1
-                    end
-                end
-
-                if !preco_definido
-                    preco_padrao = get(get(config, "precos_padroes", Dict()), "item_padrao", 100) # Dependência externa (config)
-                    reply(cliente, contexto, content="Falha ao definir preço para $name. Definindo preço padrão de $preco_padrao moedas.") # Assumindo 'cliente'
-                    push!(dados_servidor["itens_estoque"][raridade]["Value"], string(preco_padrao))
-                    atualizar_preco_item(id_servidor, name, string(preco_padrao)) # Dependência externa
-                end
-            end
-        end
-    end
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-
-    summary = "Novo estoque criado com:\n"
-    for (raridade, itens) in dados_servidor["itens_estoque"]
-        summary *= "- $(length(itens["Name"])) itens $raridade\n"
-    end
-
-    reply(cliente, contexto, content=summary) # Assumindo 'cliente'
-    reply(cliente, contexto, content="Estoque atualizado com sucesso e valores salvos!") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_loja(contexto)
-
-Handler do comando /loja. Exibe os itens disponíveis na loja para o personagem selecionado.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com a lista de itens da loja e saldo do personagem.
-"""
-function handler_comando_loja(contexto)
-    @info "Comando /loja foi acionado"
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    id_usuario = string(contexto.interaction.membro.user.id)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if isempty(get(dados_servidor, "itens_estoque", Dict()))
-        return reply(cliente, contexto, content="A loja está vazia. Um administrador precisa usar o comando /estoque para abastecê-la.") # Assumindo 'cliente'
-    end
-
-    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
-    if isempty(personagens_usuario)
-        return reply(cliente, contexto, content="Você não tem nenhum personagem. Crie um personagem primeiro antes de acessar a loja.") # Assumindo 'cliente'
-    end
-
-    reply(cliente, contexto, content="Escolha o personagem para ver a loja:") # Assumindo 'cliente'
-    for personagem in keys(personagens_usuario)
-        reply(cliente, contexto, content=personagem) # Assumindo 'cliente'
-    end
-
-    resposta = aguardar_mensagem(contexto) # Dependência externa
-    if resposta === nothing
-        return
-    end
-    personagem_selecionado = strip(resposta)
-
-    if !haskey(personagens_usuario, personagem_selecionado)
-        return reply(cliente, contexto, content="Personagem inválido selecionado.") # Assumindo 'cliente'
-    end
-
-    todos_itens = []
-    for (raridade, itens) in dados_servidor["itens_estoque"] # Corrigido: items -> itens
-        for (name, valor, quantity, text) in zip(itens["Name"], itens["Value"], itens["Quantity"], itens["Text"]) # Corrigido: items -> itens
-            if quantity > 0
-                push!(todos_itens, Dict(
-                    "Name" => name,
-                    "Value" => valor, # Corrigido: value -> valor
-                    "Quantity" => quantity,
-                    "Text" => text
-                ))
-            end
-        end
-    end
-
-    if isempty(todos_itens)
-        return reply(cliente, contexto, content="Não há itens disponíveis na loja no momento.") # Assumindo 'cliente'
-    end
-
-    for item in todos_itens
-        reply(cliente, contexto, content="""
-        **$(item["Name"])**
-        Preço: $(item["Value"]) moedas
-        Quantidade: $(item["Quantity"])
-        Descrição: $(item["Text"])
-        """) # Assumindo 'cliente'
-    end
-
-    reply(cliente, contexto, content="Seu dinheiro: $(personagens_usuario[personagem_selecionado]["dinheiro"]) moedas") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_inserir(contexto)
-
-Handler do comando /inserir. Permite inserir um novo item no estoque da loja, definindo raridade, quantidade e valor.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da operação de inserção.
-"""
-function handler_comando_inserir(contexto)
-    @info "Comando /inserir foi acionado"
-
-    if length(contexto.interaction.data.opcoes) < 3
-        return reply(cliente, contexto, content="Uso incorreto. Use: /inserir <raridade> <item> <quantidade> [valor]") # Assumindo 'cliente'
-    end
-
-    raridade = contexto.interaction.data.opcoes[1].value
-    item = contexto.interaction.data.opcoes[2].value
-    quantidade = parse(Int, contexto.interaction.data.opcoes[3].value)
-    valor = length(contexto.interaction.data.opcoes) >= 4 ? contexto.interaction.data.opcoes[4].value : nothing
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    if !haskey(dados_servidor, "itens_estoque") || isempty(dados_servidor["itens_estoque"])
-        dados_servidor["itens_estoque"] = Dict()
-    end
-
-    if !haskey(dados_servidor["itens_estoque"], raridade)
-        dados_servidor["itens_estoque"][raridade] = Dict(
-            "Name" => String[],
-            "Value" => String[],
-            "Quantity" => Int[],
-            "Text" => String[]
-        )
-    end
-
-    estoque = dados_servidor["itens_estoque"][raridade] # Corrigido: stock -> estoque
-
-    if item in estoque["Name"]
-        index = findfirst(==(item), estoque["Name"]) # Corrigido: stock -> estoque
-        estoque["Quantity"][index] += quantidade # Corrigido: stock -> estoque
-        if !isnothing(valor)
-            estoque["Value"][index] = string(valor) # Corrigido: stock -> estoque
-            atualizar_preco_item(id_servidor, item, string(valor)) # Dependência externa
-        end
-    else
-        push!(estoque["Name"], item) # Corrigido: stock -> estoque
-        push!(estoque["Quantity"], quantidade) # Corrigido: stock -> estoque
-        if !isnothing(valor)
-            push!(estoque["Value"], string(valor)) # Corrigido: stock -> estoque
-            atualizar_preco_item(id_servidor, item, string(valor)) # Dependência externa
-        else
-            preco = get(get(dados_servidor, "precos", Dict()), item, string(get(get(config, "precos_padroes", Dict()), "item_padrao", 100))) # Dependência externa (config), Corrigido: price -> preco
-            push!(estoque["Value"], preco) # Corrigido: stock -> estoque, price -> preco
-        end
-        push!(estoque["Text"], "Descrição não disponível") # Corrigido: stock -> estoque
-    end
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="Item '$item' inserido no estoque com sucesso.") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_remover(contexto)
-
-Handler do comando /remover. Permite remover um item do estoque da loja, parcial ou totalmente.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário com o resultado da operação de remoção.
-"""
-function handler_comando_remover(contexto)
-    @info "Comando /remover foi acionado"
-
-    if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do item a ser removido.") # Assumindo 'cliente'
-    end
-
-    item = contexto.interaction.data.opcoes[1].value
-    quantidade = length(contexto.interaction.data.opcoes) >= 2 ? parse(Int, contexto.interaction.data.opcoes[2].value) : nothing
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    item_found = false
-    for (raridade, stock) in get(dados_servidor, "itens_estoque", Dict())
-        if item in stock["Name"] # Corrigido: estoque -> stock
-            index = findfirst(==(item), stock["Name"])
-            if isnothing(quantidade) || quantidade >= stock["Quantity"][index]
-                deleteat!(stock["Name"], index)
-                deleteat!(stock["Value"], index)
-                deleteat!(stock["Quantity"], index)
-                deleteat!(stock["Text"], index)
-                reply(cliente, contexto, content="Item '$item' removido completamente do estoque.") # Assumindo 'cliente'
-            else
-                stock["Quantity"][index] -= quantidade
-                reply(cliente, contexto, content="Removido $quantidade de '$item'. Quantidade restante: $(stock["Quantity"][index])") # Assumindo 'cliente'
-            end
-            item_found = true
-            break
-        end
-    end
-
-    if !item_found
-        reply(cliente, contexto, content="Item '$item' não encontrado no estoque.") # Assumindo 'cliente'
-    end
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-end
-
-"""
-    limpar_handler_comando_estoque(contexto)
-
-Handler do comando /limpar_estoque. Limpa completamente o estoque da loja do servidor.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário confirmando a limpeza do estoque.
-"""
-function limpar_handler_comando_estoque(contexto)
-    @info "Comando /limpar_estoque foi acionado"
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor) # Dependência externa
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    dados_servidor["itens_estoque"] = Dict()
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-
-    reply(cliente, contexto, content="O estoque foi limpo com sucesso.") # Assumindo 'cliente'
-end
-
-""" Handler para o comando /backup (anteriormente backhandler_comando_up) """
-function backhandler_comando_up(contexto)
-    @info "Comando /backup foi acionado"
-    usuario    = contexto.interaction.membro
-    servidor   = contexto.interaction.id_guilda   |> (t -> get_guild(cliente, t))   |> fetch |> (u -> u.val) # Assumindo 'cliente'
-    canal = contexto.interaction.channel_id |> (r -> get_channel(cliente, r)) |> fetch |> (s -> s.val) # Assumindo 'cliente'
-    permissoes = Ekztazy.permissions_in(usuario, servidor, canal) # Dependência externa (Ekztazy)
-    if !has_permission(permissoes, PERM_ADMINISTRATOR) # Dependência externa (Ekztazy)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    dados_backup = contexto.interaction.id_guilda |> string |> carregar_dados_servidor |> JSON3.write # Dependência externa (carregar_dados_servidor, JSON3)
-
-    if length(dados_backup) <= 2000 # Corrigido: backup_dados -> dados_backup
-        reply(cliente, contexto, content="```json\n$dados_backup\n```") # Assumindo 'cliente'
-    else
-        open("backup_$(contexto.interaction.id_guilda).json", "w") do f
-            JSON3.write(f, dados_backup) # Dependência externa (JSON3), Corrigido: backup_dados -> dados_backup
-        end
-        reply(cliente, contexto, content="O backup é muito grande para ser enviado como mensagem. Um arquivo foi criado no servidor.") # Assumindo 'cliente'
-    end
-end
-
-"""
-    handler_comando_mensagens(contexto)
-
-Handler do comando /mensagens. Permite adicionar mensagens personalizadas para eventos como trabalho e crime.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário confirmando a adição da mensagem.
-"""
-function handler_comando_mensagens(contexto)
-    @info "Comando /mensagens foi acionado"
-
-    if length(contexto.interaction.data.opcoes) < 2
-        return reply(cliente, contexto, content="Uso incorreto. Use: /mensagens <tipo> <mensagem>") # Assumindo 'cliente'
-    end
-
-    tipo = contexto.interaction.data.opcoes[1].value
-    mensagem = contexto.interaction.data.opcoes[2].value
-
-    usuario    = contexto.interaction.membro
-    servidor   = contexto.interaction.id_guilda   |> (t -> get_guild(cliente, t))   |> fetch |> (u -> u.val) # Assumindo 'cliente'
-    canal = contexto.interaction.channel_id |> (r -> get_channel(cliente, r)) |> fetch |> (s -> s.val) # Assumindo 'cliente'
-    permissoes = Ekztazy.permissions_in(usuario, servidor, canal) # Dependência externa (Ekztazy)
-    if !has_permission(permissoes, PERM_ADMINISTRATOR) # Dependência externa (Ekztazy)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !haskey(dados_servidor, "messages")
-        dados_servidor["messages"] = Dict("trabalho" => String[], "crime" => String[])
-    end
-
-    push!(get!(dados_servidor["messages"], tipo, String[]), mensagem)
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="Mensagem adicionada ao tipo $tipo com sucesso.") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_tiers(contexto)
-
-Handler do comando /tiers. Permite configurar os tiers de níveis, definindo nível mínimo, máximo e recompensa.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário confirmando a configuração do tier.
-"""
-function handler_comando_tiers(contexto)
-    @info "Comando /tiers foi acionado"
-
-    if length(contexto.interaction.data.opcoes) < 4
-        return reply(cliente, contexto, content="Uso incorreto. Use: /tiers <tier> <nivel_min> <nivel_max> <recompensa>") # Assumindo 'cliente'
-    end
-
-    tier = contexto.interaction.data.opcoes[1].value
-    nivel_min = parse(Int, contexto.interaction.data.opcoes[2].value)
-    nivel_max = parse(Int, contexto.interaction.data.opcoes[3].value)
-    recompensa = parse(Int, contexto.interaction.data.opcoes[4].value)
-
-    usuario    = contexto.interaction.membro
-    servidor   = contexto.interaction.id_guilda   |> (t -> get_guild(cliente, t))   |> fetch |> (u -> u.val) # Assumindo 'cliente'
-    canal = contexto.interaction.channel_id |> (r -> get_channel(cliente, r)) |> fetch |> (s -> s.val) # Assumindo 'cliente'
-    permissoes = Ekztazy.permissions_in(usuario, servidor, canal) # Dependência externa (Ekztazy)
-    if !has_permission(permissoes, PERM_ADMINISTRATOR) # Dependência externa (Ekztazy)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !haskey(dados_servidor, "tiers")
-        dados_servidor["tiers"] = Dict()
-    end
-
-    dados_servidor["tiers"][tier] = Dict(
-        "nivel_min" => nivel_min,
-        "nivel_max" => nivel_max,
-        "recompensa" => recompensa
-    )
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="Tier '$tier' definido para níveis $nivel_min-$nivel_max com recompensa de $recompensa moedas.") # Assumindo 'cliente'
-end
-
-"""
-    prob_handler_comando_crime(contexto)
-
-Handler do comando /probabilidade_crime. Define a probabilidade de sucesso ao cometer um crime.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário confirmando a nova probabilidade.
-"""
-function prob_handler_comando_crime(contexto)
-    @info "Comando /probabilidade_crime foi acionado"
-
-    if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça a probabilidade de sucesso do crime.") # Assumindo 'cliente'
-    end
-
-    probabilidade = parse(Int, contexto.interaction.data.opcoes[1].value)
-
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor) # Dependência externa (permissão "loja" parece estranha aqui, talvez devesse ser outra?)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
-
-    if !(0 <= probabilidade <= 100)
-        return reply(cliente, contexto, content="Por favor, insira um valor entre 0 e 100.") # Assumindo 'cliente'
-    end
-
-    dados_servidor["probabilidade_crime"] = probabilidade
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="Probabilidade de sucesso no crime definida para $probabilidade%.") # Assumindo 'cliente'
-end
-
-"""
-    handler_comando_rip(contexto)
-
-Handler do comando /rip. Remove permanentemente um personagem, após confirmação.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário confirmando a eliminação ou cancelamento.
-"""
-function handler_comando_rip(contexto)
-    @info "Comando /rip foi acionado"
-
-    if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
-    end
-
-    personagem = contexto.interaction.data.opcoes[1].value
-    id_servidor = string(contexto.interaction.id_guilda)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
-
-    usuario    = contexto.interaction.membro
-    servidor   = contexto.interaction.id_guilda   |> (t -> get_guild(cliente, t))   |> fetch |> (u -> u.val) # Assumindo 'cliente'
-    canal = contexto.interaction.channel_id |> (r -> get_channel(cliente, r)) |> fetch |> (s -> s.val) # Assumindo 'cliente'
-    permissoes = Ekztazy.permissions_in(usuario, servidor, canal) # Dependência externa (Ekztazy)
-
-    # Permite admin OU dono do personagem (verificado por verificar_permissoes com allow_owner=true)
-    if !has_permission(permissoes, PERM_ADMINISTRATOR) && !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true) # Dependência externa (Ekztazy, verificar_permissoes)
-         return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para usar este comando.")) # Dependência externa (config), Assumindo 'cliente'
-    end
+    dados_servidor = carregar_dados_servidor(id_servidor)
 
     personagem_encontrado = false
-    id_proprietario = ""
-    for (id_usuario_loop, personagems) in dados_servidor["personagens"] # Corrigido: id_usuario -> id_usuario_loop para evitar sombreamento
-        if haskey(personagems, personagem)
-            id_proprietario = id_usuario_loop
+    dados_personagem = nothing
+    for (id_usuario_dono, personagens_dono) in dados_servidor["personagens"]
+        if haskey(personagens_dono, personagem)
+            dados_personagem = personagens_dono[personagem]
             personagem_encontrado = true
             break
         end
     end
 
     if !personagem_encontrado
-        return reply(cliente, contexto, content="Personagem $personagem não encontrado.") # Assumindo 'cliente'
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Personagem não encontrado."))
     end
 
-    # Verifica se quem chamou é o proprietário ou admin
-    if !(string(contexto.interaction.membro.user.id) == id_proprietario || has_permission(permissoes, PERM_ADMINISTRATOR))
-         return reply(cliente, contexto, content=get(config["messages"]["erros"], "permissao", "Você não tem permissão para remover este personagem.")) # Dependência externa (config), Assumindo 'cliente'
+    if !verificar_permissoes(contexto.interaction.membro, personagem, "view", dados_servidor, true)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você não tem permissão para ver este saldo."))
     end
 
-    reply(cliente, contexto, content="Tem certeza que deseja eliminar o personagem $personagem? Responda 'sim' para confirmar.") # Assumindo 'cliente'
-
-    resposta = aguardar_mensagem(contexto) # Dependência externa
-    if resposta === nothing || lowercase(strip(resposta)) != "sim"
-        return reply(cliente, contexto, content="Eliminação cancelada.") # Assumindo 'cliente'
-    end
-
-    delete!(dados_servidor["personagens"][id_proprietario], personagem)
-    if isempty(dados_servidor["personagens"][id_proprietario])
-        delete!(dados_servidor["personagens"], id_proprietario)
-    end
-
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="Personagem $personagem foi eliminado com sucesso.") # Assumindo 'cliente'
+    money = get(dados_personagem, "dinheiro", 0)
+    reply(cliente, contexto, content="$personagem tem $money moedas.")
 end
 
 """
-    handler_comando_inss(contexto)
+    handler_comando_pix(contexto)
 
-Handler do comando /inss. Aposenta um personagem, movendo seus dados para a seção 'aposentados'.
-
-- `contexto`: Contexto da interação Discord.
-
-Responde ao usuário confirmando a aposentadoria do personagem.
+Handler do comando `/pix`. Transfere moedas entre dois personagens.
 """
-function handler_comando_inss(contexto)
-    @info "Comando /inss foi acionado"
+function handler_comando_pix(contexto)
+    @info "Comando /pix foi acionado por $(contexto.interaction.membro.user.username)"
+    if length(contexto.interaction.data.opcoes) < 3
+        return reply(cliente, contexto, content="Uso incorreto. Use: /pix <de_personagem> <para_personagem> <quantidade>")
+    end
 
+    personagem_origem = contexto.interaction.data.opcoes[1].value
+    personagem_destino = contexto.interaction.data.opcoes[2].value
+    quantidade_str = contexto.interaction.data.opcoes[3].value
+    quantidade = tryparse(Int, quantidade_str)
+
+    if isnothing(quantidade) || quantidade <= 0
+        return reply(cliente, contexto, content="A quantidade deve ser um número inteiro maior que zero.")
+    end
+
+    if personagem_origem == personagem_destino
+        return reply(cliente, contexto, content="Personagem de origem e destino não podem ser os mesmos.")
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    id_usuario_remetente = string(contexto.interaction.membro.user.id)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    personagens_remetente = get(dados_servidor["personagens"], id_usuario_remetente, Dict())
+    if !haskey(personagens_remetente, personagem_origem)
+        return reply(cliente, contexto, content="Você não possui um personagem chamado '$personagem_origem'.")
+    end
+    dados_remetente = personagens_remetente[personagem_origem]
+
+    destinatario_encontrado = false
+    id_usuario_destinatario = nothing
+    dados_destinatario = nothing
+    for (id_dono, personagens_dono) in dados_servidor["personagens"]
+        if haskey(personagens_dono, personagem_destino)
+            if id_dono == id_usuario_remetente
+                 return reply(cliente, contexto, content="Não é possível transferir moedas para um de seus próprios personagens.")
+            end
+            id_usuario_destinatario = id_dono
+            dados_destinatario = personagens_dono[personagem_destino]
+            destinatario_encontrado = true
+            break
+        end
+    end
+
+    if !destinatario_encontrado
+        return reply(cliente, contexto, content="O personagem destinatário '$personagem_destino' não foi encontrado.")
+    end
+
+    if dados_remetente["dinheiro"] < quantidade
+        return reply(cliente, contexto, content="$personagem_origem não tem moedas suficientes. Saldo disponível: $(dados_remetente["dinheiro"])")
+    end
+
+    dados_remetente["dinheiro"] -= quantidade
+    dados_destinatario["dinheiro"] += quantidade
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+
+    reply(cliente, contexto, content="Transferência realizada com sucesso!\n$personagem_origem enviou $quantidade moedas para $personagem_destino.\nNovo saldo de $personagem_origem: $(dados_remetente["dinheiro"]) moedas.")
+    @info "Pix de $quantidade moedas de $personagem_origem (User: $id_usuario_remetente) para $personagem_destino (User: $id_usuario_destinatario)."
+end
+
+"""
+    handler_comando_trabalhar(contexto)
+
+Handler do comando `/trabalhar`. Permite que um personagem trabalhe para ganhar moedas.
+"""
+function handler_comando_trabalhar(contexto)
+    @info "Comando /trabalhar foi acionado por $(contexto.interaction.membro.user.username)"
     if isempty(contexto.interaction.data.opcoes)
-        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.") # Assumindo 'cliente'
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.")
     end
 
     personagem = contexto.interaction.data.opcoes[1].value
     id_servidor = string(contexto.interaction.id_guilda)
     id_usuario = string(contexto.interaction.membro.user.id)
-    dados_servidor = carregar_dados_servidor(id_servidor) # Dependência externa
+    dados_servidor = carregar_dados_servidor(id_servidor)
 
     personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
     if !haskey(personagens_usuario, personagem)
-        return reply(cliente, contexto, content=get(config["messages"]["erros"], "personagem_nao_encontrado", "Personagem não encontrado.")) # Dependência externa (config), Assumindo 'cliente'
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Você não possui um personagem com este nome."))
+    end
+    dados_personagem = personagens_usuario[personagem]
+
+    ultimo_trabalho_str = get(dados_personagem, "ultimo_trabalho", nothing)
+    now_time = Dates.now()
+    intervalo_trabalhar_s = get(get(config, "limites", Dict()), "intervalo_trabalhar", 86400)
+    if !isnothing(ultimo_trabalho_str)
+        ultimo_trabalho_dt = tryparse(DateTime, ultimo_trabalho_str)
+        if !isnothing(ultimo_trabalho_dt)
+            tempo_passado_ms = Dates.value(now_time - ultimo_trabalho_dt)
+            if tempo_passado_ms < intervalo_trabalhar_s * 1000
+                tempo_restante_s = ceil(Int, (intervalo_trabalhar_s * 1000 - tempo_passado_ms) / 1000)
+                msg_cooldown = get(get(config, "messages", Dict()), "erros", Dict())
+                return reply(cliente, contexto, content=get(msg_cooldown, "acao_frequente", "Você já trabalhou recentemente. Aguarde $tempo_restante_s segundos."))
+            end
+        else
+             @warn "Timestamp inválido para ultimo_trabalho do personagem $personagem: $ultimo_trabalho_str"
+        end
     end
 
-    if !haskey(dados_servidor, "aposentados")
-        dados_servidor["aposentados"] = Dict()
+    nivel = get(dados_personagem, "nivel", 1)
+    nome_tier = obter_tier(nivel, dados_servidor)
+    recompensa = 0
+    if !isnothing(nome_tier) && haskey(dados_servidor["tiers"], nome_tier)
+        tier_info = dados_servidor["tiers"][nome_tier]
+        recompensa = get(tier_info, "recompensa", 0)
+    else
+         recompensa = get(get(config, "recompensas_padrao", Dict()), "trabalho", 50)
+         @warn "Tier '$nome_tier' não encontrado ou sem recompensa definida para nível $nivel. Usando recompensa padrão: $recompensa"
     end
 
-    dados_servidor["aposentados"][personagem] = personagens_usuario[personagem]
-    delete!(personagens_usuario, personagem)
+    if recompensa <= 0
+         @warn "Recompensa de trabalho calculada como $recompensa para $personagem (Nível $nivel, Tier: $nome_tier). Verifique a configuração."
+         return reply(cliente, contexto, content="Ocorreu um problema ao calcular sua recompensa. Contate um administrador.")
+    end
+
+    dados_personagem["dinheiro"] += recompensa
+    dados_personagem["ultimo_trabalho"] = string(now_time)
+
+    mensagens_trabalho = get(get(dados_servidor, "messages", Dict()), "trabalho", get(config["messages"], "trabalho", ["Você trabalhou duro e ganhou sua recompensa!"]))
+    mensagem = rand(mensagens_trabalho)
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="$mensagem\nVocê ganhou $recompensa moedas. Saldo atual: $(dados_personagem["dinheiro"]) moedas.")
+    @info "$personagem (User: $id_usuario) trabalhou e ganhou $recompensa moedas."
+end
+
+"""
+    handler_comando_crime(contexto)
+
+Handler do comando `/crime`. Permite que um personagem tente cometer um crime.
+"""
+function handler_comando_crime(contexto)
+    @info "Comando /crime foi acionado por $(contexto.interaction.membro.user.username)"
+    if isempty(contexto.interaction.data.opcoes)
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem.")
+    end
+
+    personagem = contexto.interaction.data.opcoes[1].value
+    id_servidor = string(contexto.interaction.id_guilda)
+    id_usuario = string(contexto.interaction.membro.user.id)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
+    if !haskey(personagens_usuario, personagem)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Você não possui um personagem com este nome."))
+    end
+    dados_personagem = personagens_usuario[personagem]
+
+    ultimo_crime_str = get(dados_personagem, "ultimo_crime", nothing)
+    now_time = Dates.now()
+    intervalo_crime_s = get(get(config, "limites", Dict()), "intervalo_crime", 86400)
+    if !isnothing(ultimo_crime_str)
+         ultimo_crime_dt = tryparse(DateTime, ultimo_crime_str)
+         if !isnothing(ultimo_crime_dt)
+            tempo_passado_ms = Dates.value(now_time - ultimo_crime_dt)
+            if tempo_passado_ms < intervalo_crime_s * 1000
+                tempo_restante_s = ceil(Int, (intervalo_crime_s * 1000 - tempo_passado_ms) / 1000)
+                msg_cooldown = get(get(config, "messages", Dict()), "erros", Dict())
+                return reply(cliente, contexto, content=get(msg_cooldown, "acao_frequente", "Você já cometeu um crime recentemente. Aguarde $tempo_restante_s segundos."))
+            end
+        else
+            @warn "Timestamp inválido para ultimo_crime do personagem $personagem: $ultimo_crime_str"
+        end
+    end
+
+    probabilidade_sucesso = get(dados_servidor, "probabilidade_crime", get(get(config, "probabilidades", Dict()), "crime", 50))
+    chance = rand(1:100)
+
+    mensagens_crime = get(get(dados_servidor, "messages", Dict()), "crime", get(config["messages"], "crime", ["Você tentou cometer um crime..."]))
+    mensagem = rand(mensagens_crime)
+
+    resultado_str = ""
+    ganho_perda = 0
+
+    if chance <= probabilidade_sucesso
+        recompensa_min = get(get(config, "recompensas_crime", Dict()), "min", 100)
+        recompensa_max = get(get(config, "recompensas_crime", Dict()), "max", 500)
+        ganho_perda = rand(recompensa_min:recompensa_max)
+        dados_personagem["dinheiro"] += ganho_perda
+        resultado_str = "Sucesso! Você ganhou $ganho_perda moedas."
+    else
+        perda_min = get(get(config, "perdas_crime", Dict()), "min", 50)
+        perda_max = get(get(config, "perdas_crime", Dict()), "max", 250)
+        perda = rand(perda_min:perda_max)
+        saldo_anterior = dados_personagem["dinheiro"]
+        dados_personagem["dinheiro"] = max(0, saldo_anterior - perda)
+        ganho_perda = -(min(saldo_anterior, perda))
+        resultado_str = "Você foi pego! Perdeu $(abs(ganho_perda)) moedas."
+    end
+
+    dados_personagem["ultimo_crime"] = string(now_time)
+    dados_personagem["estrelas"] = get(dados_personagem, "estrelas", 0) + 1
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="$mensagem\n$resultado_str\nSaldo atual: $(dados_personagem["dinheiro"]) moedas.")
+    @info "$personagem (User: $id_usuario) tentou um crime. Resultado: $resultado_str (Prob: $probabilidade_sucesso%, Rolou: $chance). Saldo: $(dados_personagem["dinheiro"])"
+end
+
+"""
+    handler_comando_cargos(contexto)
+
+Handler do comando `/cargos`. Gerencia cargos especiais para permissões.
+"""
+function handler_comando_cargos(contexto)
+    @info "Comando /cargos foi acionado por $(contexto.interaction.membro.user.username)"
+    if length(contexto.interaction.data.opcoes) < 3
+        return reply(cliente, contexto, content="Uso incorreto. Use: /cargos <tipo> <acao> <cargo>")
+    end
+
+    tipo = contexto.interaction.data.opcoes[1].value
+    acao = contexto.interaction.data.opcoes[2].value
+    nome_cargo = contexto.interaction.data.opcoes[3].value
+
+    usuario = contexto.interaction.membro
+    guild_future = get_guild(cliente, contexto.interaction.id_guilda)
+    guild = fetch(guild_future).val
+    if isnothing(guild)
+         @error "Não foi possível obter informações da Guild $(contexto.interaction.id_guilda)"
+         return reply(cliente, contexto, content="Erro ao obter informações do servidor.")
+    end
+    permissoes = Ekztazy.permissions(usuario, guild)
+
+    if !has_permission(permissoes, Ekztazy.PERM_ADMINISTRATOR)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você precisa ser administrador para usar este comando."))
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    tipos_validos = ["saldo", "marcos", "loja", "view"]
+    if !(tipo in tipos_validos)
+        return reply(cliente, contexto, content="Tipo inválido. Use: $(join(tipos_validos, ", "))")
+    end
+    if !(acao in ["add", "remove"])
+        return reply(cliente, contexto, content="Ação inválida. Use 'add' ou 'remove'.")
+    end
+
+    cargo_encontrado = nothing
+    for role in guild.roles
+        if lowercase(role.name) == lowercase(nome_cargo)
+            cargo_encontrado = role
+            break
+        end
+    end
+
+    if isnothing(cargo_encontrado)
+        return reply(cliente, contexto, content="Cargo '$nome_cargo' não encontrado neste servidor.")
+    end
+    id_cargo = cargo_encontrado.id
+
+    special_roles = get!(dados_servidor, "special_roles", Dict{String, Any}())
+    lista_cargos = get!(special_roles, tipo, UInt64[])
+
+    if acao == "add"
+        if !(id_cargo in lista_cargos)
+            push!(lista_cargos, id_cargo)
+            reply(cliente, contexto, content="Cargo '$(cargo_encontrado.name)' adicionado às permissões de '$tipo'.")
+            @info "Cargo $(cargo_encontrado.name) ($id_cargo) adicionado a '$tipo' por $(usuario.user.username)"
+        else
+            reply(cliente, contexto, content="Cargo '$(cargo_encontrado.name)' já possui permissão para '$tipo'.")
+        end
+    elseif acao == "remove"
+        if id_cargo in lista_cargos
+            filter!(id -> id != id_cargo, lista_cargos)
+            reply(cliente, contexto, content="Cargo '$(cargo_encontrado.name)' removido das permissões de '$tipo'.")
+             @info "Cargo $(cargo_encontrado.name) ($id_cargo) removido de '$tipo' por $(usuario.user.username)"
+        else
+            reply(cliente, contexto, content="Cargo '$(cargo_encontrado.name)' não possuía permissão para '$tipo'.")
+        end
+    end
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+end
+
+
+"""
+    handler_comando_estoque(contexto)
+
+Handler do comando `/estoque`. Reabastece a loja com itens aleatórios de um CSV.
+"""
+function handler_comando_estoque(contexto)
+    @info "Comando /estoque foi acionado por $(contexto.interaction.membro.user.username)"
+    if length(contexto.interaction.data.opcoes) < 4
+        return reply(cliente, contexto, content="Uso incorreto. Use: /estoque <comum> <incomum> <raro> <muito_raro>")
+    end
+
+    quantidades_raridade = Dict{String, Int}()
+    nomes_raridade = ["comum", "incomum", "raro", "muito_raro"]
+    raridades_map = Dict("comum" => "common", "incomum" => "uncommon", "raro" => "rare", "muito_raro" => "very rare")
+
+    for (i, nome_pt) in enumerate(nomes_raridade)
+        valor_str = contexto.interaction.data.opcoes[i].value
+        qnt = tryparse(Int, valor_str)
+        if isnothing(qnt) || qnt < 0
+            return reply(cliente, contexto, content="Quantidade inválida para '$nome_pt'. Use números inteiros não negativos.")
+        end
+        quantidades_raridade[raridades_map[nome_pt]] = qnt
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor, false)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você não tem permissão para gerenciar o estoque."))
+    end
+
+    dados_servidor["itens_estoque"] = Dict{String, Any}()
+
+    csv_file = isfile("items_$(id_servidor).csv") ? "items_$(id_servidor).csv" : "items.csv"
+    todos_itens_df = nothing
+    try
+        todos_itens_df = CSV.read(csv_file, DataFrame)
+        colunas_necessarias = ["Name", "Rarity", "Text"]
+        if !all(col -> col in names(todos_itens_df), colunas_necessarias)
+             @error "Arquivo CSV '$csv_file' não contém as colunas necessárias: Name, Rarity, Text."
+             return reply(cliente, contexto, content="Erro: Formato inválido do arquivo de itens '$csv_file'. Faltam colunas.")
+        end
+    catch e
+        @error "Erro ao ler o arquivo CSV '$csv_file'" exception=(e, catch_backtrace())
+        return reply(cliente, contexto, content="Erro: Não foi possível ler o arquivo de itens '$csv_file'. Verifique se ele existe e tem permissões corretas.")
+    end
+
+    reply(cliente, contexto, content="Criando novo estoque a partir de '$csv_file'. Por favor, defina os preços para cada item selecionado.")
+
+    for (raridade_en, count_desejado) in quantidades_raridade
+        if count_desejado == 0 continue end
+
+        itens_disponiveis_raridade = filter(row -> lowercase(row.Rarity) == raridade_en, todos_itens_df)
+        contagem_disponivel = nrow(itens_disponiveis_raridade)
+
+        if contagem_disponivel == 0
+            @warn "Nenhum item encontrado para a raridade '$raridade_en' no arquivo '$csv_file'."
+            continue
+        end
+
+        count_real = min(count_desejado, contagem_disponivel)
+
+        indices_selecionados = rand(1:contagem_disponivel, count_real)
+        itens_selecionados_df = itens_disponiveis_raridade[indices_selecionados, :]
+
+        dados_servidor["itens_estoque"][raridade_en] = Dict(
+            "Name" => String.(itens_selecionados_df.Name),
+            "Value" => String[],
+            "Quantity" => fill(1, count_real),
+            "Text" => String.(itens_selecionados_df.Text)
+        )
+
+        reply(cliente, contexto, content="--- Definindo preços para itens de raridade: $raridade_en ---")
+        for nome_item in dados_servidor["itens_estoque"][raridade_en]["Name"]
+            preco_definido = false
+            attempts = 0
+            preco_final_str = ""
+            while !preco_definido && attempts < 3
+                reply(cliente, contexto, content="Digite o preço para **$nome_item**: (Apenas números)")
+                resposta = aguardar_mensagem(contexto)
+                if resposta === nothing
+                    reply(cliente, contexto, content="Tempo esgotado para definir o preço de $nome_item.")
+                    break
+                end
+
+                preco_int = tryparse(Int, strip(resposta))
+                if !isnothing(preco_int) && preco_int >= 0
+                    preco_final_str = string(preco_int)
+                    push!(dados_servidor["itens_estoque"][raridade_en]["Value"], preco_final_str)
+                    atualizar_preco_item(id_servidor, nome_item, preco_final_str)
+                    reply(cliente, contexto, content="Preço de '$nome_item' definido como $preco_final_str moedas.")
+                    preco_definido = true
+                else
+                    reply(cliente, contexto, content="Preço inválido. Por favor, digite um número inteiro não negativo.")
+                    attempts += 1
+                end
+            end
+
+            if !preco_definido
+                preco_padrao = get(get(config, "precos_padroes", Dict()), raridade_en, 100)
+                preco_final_str = string(preco_padrao)
+                push!(dados_servidor["itens_estoque"][raridade_en]["Value"], preco_final_str)
+                atualizar_preco_item(id_servidor, nome_item, preco_final_str)
+                reply(cliente, contexto, content="Falha ao definir preço para '$nome_item'. Usando preço padrão de $preco_final_str moedas.")
+            end
+        end
+    end
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+
+    summary = "--- Resumo do Novo Estoque ---\n"
+    if isempty(dados_servidor["itens_estoque"])
+        summary *= "Nenhum item foi adicionado ao estoque."
+    else
+        for (raridade, itens) in dados_servidor["itens_estoque"]
+            num_itens = length(get(itens, "Name", []))
+            if num_itens > 0
+                summary *= "- **$raridade**: $num_itens itens\n"
+            end
+        end
+    end
+
+    reply(cliente, contexto, content=summary)
+    reply(cliente, contexto, content="Estoque atualizado e preços salvos!")
+    @info "Estoque reabastecido para servidor $id_servidor por $(contexto.interaction.membro.user.username)."
+end
+
+"""
+    handler_comando_loja(contexto)
+
+Handler do comando `/loja`. Exibe os itens disponíveis na loja.
+"""
+function handler_comando_loja(contexto)
+    @info "Comando /loja foi acionado por $(contexto.interaction.membro.user.username)"
+    id_servidor = string(contexto.interaction.id_guilda)
+    id_usuario = string(contexto.interaction.membro.user.id)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    itens_estoque = get(dados_servidor, "itens_estoque", Dict())
+    if isempty(itens_estoque) || all(isempty(get(d, "Name", [])) for d in values(itens_estoque))
+        return reply(cliente, contexto, content="A loja está vazia no momento.")
+    end
+
+    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
+    if isempty(personagens_usuario)
+        return reply(cliente, contexto, content="Você não tem nenhum personagem para visitar a loja. Use `/criar` primeiro.")
+    end
+
+    nomes_personagens = collect(keys(personagens_usuario))
+    msg_selecao = "Escolha o personagem para ver a loja:\n" * join("- " .* nomes_personagens, "\n")
+    reply(cliente, contexto, content=msg_selecao)
+
+    resposta = aguardar_mensagem(contexto)
+    if resposta === nothing
+        return
+    end
+    personagem_selecionado = strip(resposta)
+
+    if !haskey(personagens_usuario, personagem_selecionado)
+        return reply(cliente, contexto, content="Personagem inválido selecionado.")
+    end
+    dados_personagem_selecionado = personagens_usuario[personagem_selecionado]
+
+    itens_para_exibir = []
+    for (raridade, itens_raridade) in itens_estoque
+        nomes = get(itens_raridade, "Name", [])
+        valores = get(itens_raridade, "Value", [])
+        quantidades = get(itens_raridade, "Quantity", [])
+        textos = get(itens_raridade, "Text", [])
+
+        min_len = min(length(nomes), length(valores), length(quantidades), length(textos))
+
+        for i in 1:min_len
+            if quantidades[i] > 0
+                push!(itens_para_exibir, Dict(
+                    "Name" => nomes[i],
+                    "Value" => valores[i],
+                    "Quantity" => quantidades[i],
+                    "Text" => textos[i],
+                    "Rarity" => raridade
+                ))
+            end
+        end
+    end
+
+    if isempty(itens_para_exibir)
+        return reply(cliente, contexto, content="Não há itens disponíveis na loja no momento.")
+    end
+
+    reply(cliente, contexto, content="--- Itens Disponíveis na Loja ---")
+    for item in itens_para_exibir
+        reply(cliente, contexto, content="""
+        **$(item["Name"])** [$(item["Rarity"])]
+        Preço: $(item["Value"]) moedas
+        Quantidade: $(item["Quantity"])
+        Descrição: $(item["Text"])
+        """)
+    end
+
+    saldo_personagem = get(dados_personagem_selecionado, "dinheiro", 0)
+    reply(cliente, contexto, content="--- Saldo de $personagem_selecionado: $saldo_personagem moedas ---")
+end
+
+"""
+    handler_comando_inserir(contexto)
+
+Handler do comando `/inserir`. Adiciona um item específico ao estoque da loja.
+"""
+function handler_comando_inserir(contexto)
+    @info "Comando /inserir foi acionado por $(contexto.interaction.membro.user.username)"
+    if length(contexto.interaction.data.opcoes) < 3
+        return reply(cliente, contexto, content="Uso incorreto. Use: /inserir <raridade> <item> <quantidade> [valor]")
+    end
+
+    raridade = lowercase(contexto.interaction.data.opcoes[1].value)
+    item_nome = contexto.interaction.data.opcoes[2].value
+    quantidade_str = contexto.interaction.data.opcoes[3].value
+    valor_str = length(contexto.interaction.data.opcoes) >= 4 ? contexto.interaction.data.opcoes[4].value : nothing
+
+    quantidade = tryparse(Int, quantidade_str)
+    if isnothing(quantidade) || quantidade <= 0
+        return reply(cliente, contexto, content="Quantidade inválida. Deve ser um número inteiro positivo.")
+    end
+
+    valor_int = nothing
+    if !isnothing(valor_str)
+        valor_int = tryparse(Int, valor_str)
+        if isnothing(valor_int) || valor_int < 0
+            return reply(cliente, contexto, content="Valor inválido. Deve ser um número inteiro não negativo.")
+        end
+    end
+
+    raridades_validas = ["common", "uncommon", "rare", "very rare"]
+    if !(raridade in raridades_validas)
+         return reply(cliente, contexto, content="Raridade inválida. Use: $(join(raridades_validas, ", "))")
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor, false)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você não tem permissão para gerenciar o estoque."))
+    end
+
+    itens_estoque = get!(dados_servidor, "itens_estoque", Dict{String, Any}())
+    estoque_raridade = get!(itens_estoque, raridade, Dict(
+        "Name" => String[], "Value" => String[], "Quantity" => Int[], "Text" => String[]
+    ))
+
+    indice_existente = findfirst(==(item_nome), estoque_raridade["Name"])
+
+    if !isnothing(indice_existente)
+        estoque_raridade["Quantity"][indice_existente] += quantidade
+        if !isnothing(valor_int)
+            valor_final_str = string(valor_int)
+            estoque_raridade["Value"][indice_existente] = valor_final_str
+            atualizar_preco_item(id_servidor, item_nome, valor_final_str)
+            @info "Valor do item existente '$item_nome' atualizado para $valor_final_str."
+        end
+        @info "Quantidade do item existente '$item_nome' incrementada em $quantidade."
+    else
+        push!(estoque_raridade["Name"], item_nome)
+        push!(estoque_raridade["Quantity"], quantidade)
+        push!(estoque_raridade["Text"], "Descrição a ser definida.")
+
+        valor_final_str = ""
+        if !isnothing(valor_int)
+            valor_final_str = string(valor_int)
+        else
+            preco_global = get(get(dados_servidor, "precos", Dict()), item_nome, nothing)
+            if !isnothing(preco_global)
+                valor_final_str = string(preco_global)
+            else
+                preco_padrao = get(get(config, "precos_padroes", Dict()), raridade, 100)
+                valor_final_str = string(preco_padrao)
+                @warn "Preço não fornecido nem encontrado globalmente para '$item_nome'. Usando padrão $valor_final_str."
+            end
+        end
+        push!(estoque_raridade["Value"], valor_final_str)
+        atualizar_preco_item(id_servidor, item_nome, valor_final_str)
+        @info "Novo item '$item_nome' adicionado com quantidade $quantidade e valor $valor_final_str."
+    end
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="Item '$item_nome' (x$quantidade) inserido/atualizado no estoque ($raridade) com sucesso.")
+end
+
+"""
+    handler_comando_remover(contexto)
+
+Handler do comando `/remover`. Remove um item do estoque da loja.
+"""
+function handler_comando_remover(contexto)
+    @info "Comando /remover foi acionado por $(contexto.interaction.membro.user.username)"
+    if isempty(contexto.interaction.data.opcoes)
+        return reply(cliente, contexto, content="Por favor, forneça o nome do item a ser removido.")
+    end
+
+    item_nome = contexto.interaction.data.opcoes[1].value
+    quantidade_str = length(contexto.interaction.data.opcoes) >= 2 ? contexto.interaction.data.opcoes[2].value : nothing
+    quantidade_remover = nothing
+    if !isnothing(quantidade_str)
+        quantidade_remover = tryparse(Int, quantidade_str)
+        if isnothing(quantidade_remover) || quantidade_remover <= 0
+            return reply(cliente, contexto, content="Quantidade inválida. Deve ser um número inteiro positivo.")
+        end
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor, false)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você não tem permissão para gerenciar o estoque."))
+    end
+
+    item_encontrado = false
+    remocao_realizada = false
+    for (raridade, estoque_raridade) in get(dados_servidor, "itens_estoque", Dict())
+        nomes = get(estoque_raridade, "Name", [])
+        indice_item = findfirst(==(item_nome), nomes)
+
+        if !isnothing(indice_item)
+            item_encontrado = true
+            quantidade_atual = estoque_raridade["Quantity"][indice_item]
+
+            if isnothing(quantidade_remover) || quantidade_remover >= quantidade_atual
+                deleteat!(estoque_raridade["Name"], indice_item)
+                deleteat!(estoque_raridade["Value"], indice_item)
+                deleteat!(estoque_raridade["Quantity"], indice_item)
+                deleteat!(estoque_raridade["Text"], indice_item)
+                reply(cliente, contexto, content="Item '$item_nome' removido completamente do estoque ($raridade).")
+                remocao_realizada = true
+                @info "Item '$item_nome' removido completamente ($raridade) por $(contexto.interaction.membro.user.username)."
+            else
+                estoque_raridade["Quantity"][indice_item] -= quantidade_remover
+                reply(cliente, contexto, content="Removido $quantidade_remover de '$item_nome' ($raridade). Quantidade restante: $(estoque_raridade["Quantity"][indice_item])")
+                remocao_realizada = true
+                 @info "Removido $quantidade_remover de '$item_nome' ($raridade) por $(contexto.interaction.membro.user.username). Restante: $(estoque_raridade["Quantity"][indice_item])"
+            end
+            break
+        end
+    end
+
+    if !item_encontrado
+        reply(cliente, contexto, content="Item '$item_nome' não encontrado no estoque.")
+    elseif remocao_realizada
+        salvar_dados_servidor(id_servidor, dados_servidor)
+    end
+end
+
+"""
+    limpar_handler_comando_estoque(contexto)
+
+Handler do comando `/limpar_estoque`. Remove todos os itens do estoque da loja.
+"""
+function limpar_handler_comando_estoque(contexto)
+    @info "Comando /limpar_estoque foi acionado por $(contexto.interaction.membro.user.username)"
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    if !verificar_permissoes(contexto.interaction.membro, nothing, "loja", dados_servidor, false)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você não tem permissão para limpar o estoque."))
+    end
+
+    dados_servidor["itens_estoque"] = Dict{String, Any}()
+    salvar_dados_servidor(id_servidor, dados_servidor)
+
+    reply(cliente, contexto, content="O estoque da loja foi limpo com sucesso.")
+    @info "Estoque limpo para servidor $id_servidor por $(contexto.interaction.membro.user.username)."
+end
+
+"""
+    backhandler_comando_up(contexto)
+
+Handler do comando `/backup`. Cria e envia um backup dos dados do servidor em formato JSON.
+"""
+function backhandler_comando_up(contexto) # Renomear para handler_comando_backup seria mais claro
+    @info "Comando /backup foi acionado por $(contexto.interaction.membro.user.username)"
+    usuario = contexto.interaction.membro
+
+    guild_future = get_guild(cliente, contexto.interaction.id_guilda)
+    guild = fetch(guild_future).val
+     if isnothing(guild)
+         @error "Não foi possível obter informações da Guild $(contexto.interaction.id_guilda) para backup"
+         return reply(cliente, contexto, content="Erro ao obter informações do servidor para backup.")
+    end
+    permissoes = Ekztazy.permissions(usuario, guild)
+    if !has_permission(permissoes, Ekztazy.PERM_ADMINISTRATOR)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você precisa ser administrador para usar este comando."))
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+
+    dados_backup_json = exportar_dados_json(id_servidor) # Função no mesmo escopo
+
+    if length(dados_backup_json) <= 1990
+        reply(cliente, contexto, content="```json\n$(dados_backup_json)\n```")
+        @info "Backup enviado como mensagem para servidor $id_servidor."
+    else
+        backup_filename = "backup_$(id_servidor).json"
+        try
+            open(backup_filename, "w") do f
+                write(f, dados_backup_json)
+            end
+            reply(cliente, contexto, content="O backup dos dados é muito grande para ser enviado como mensagem. Foi salvo no arquivo `$backup_filename` no diretório do bot.")
+            @info "Backup salvo no arquivo $backup_filename para servidor $id_servidor."
+        catch e
+            @error "Erro ao salvar arquivo de backup $backup_filename" exception=(e, catch_backtrace())
+            reply(cliente, contexto, content="Erro ao salvar o arquivo de backup no servidor.")
+        end
+    end
+end
+
+"""
+    handler_comando_mensagens(contexto)
+
+Handler do comando `/mensagens`. Adiciona mensagens personalizadas para eventos.
+"""
+function handler_comando_mensagens(contexto)
+    @info "Comando /mensagens foi acionado por $(contexto.interaction.membro.user.username)"
+    if length(contexto.interaction.data.opcoes) < 2
+        return reply(cliente, contexto, content="Uso incorreto. Use: /mensagens <tipo> <mensagem>")
+    end
+
+    tipo = contexto.interaction.data.opcoes[1].value
+    mensagem = contexto.interaction.data.opcoes[2].value
+
+    usuario = contexto.interaction.membro
+    guild_future = get_guild(cliente, contexto.interaction.id_guilda)
+    guild = fetch(guild_future).val
+     if isnothing(guild)
+         @error "Não foi possível obter informações da Guild $(contexto.interaction.id_guilda) para /mensagens"
+         return reply(cliente, contexto, content="Erro ao obter informações do servidor.")
+    end
+    permissoes = Ekztazy.permissions(usuario, guild)
+    if !has_permission(permissoes, Ekztazy.PERM_ADMINISTRATOR)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você precisa ser administrador para usar este comando."))
+    end
+
+    tipos_validos = ["trabalho", "crime"]
+    if !(tipo in tipos_validos)
+         return reply(cliente, contexto, content="Tipo de mensagem inválido. Tipos válidos: $(join(tipos_validos, ", "))")
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    mensagens_servidor = get!(dados_servidor, "messages", Dict{String, Any}())
+    lista_mensagens = get!(mensagens_servidor, tipo, String[])
+    push!(lista_mensagens, mensagem)
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="Mensagem adicionada para o evento '$tipo' com sucesso.")
+    @info "Mensagem para '$tipo' adicionada no servidor $id_servidor por $(usuario.user.username)."
+end
+
+"""
+    handler_comando_tiers(contexto)
+
+Handler do comando `/tiers`. Configura os tiers de nível (min, max, recompensa).
+"""
+function handler_comando_tiers(contexto)
+    @info "Comando /tiers foi acionado por $(contexto.interaction.membro.user.username)"
+    if length(contexto.interaction.data.opcoes) < 4
+        return reply(cliente, contexto, content="Uso incorreto. Use: /tiers <tier> <nivel_min> <nivel_max> <recompensa>")
+    end
+
+    tier_nome = contexto.interaction.data.opcoes[1].value
+    nivel_min_str = contexto.interaction.data.opcoes[2].value
+    nivel_max_str = contexto.interaction.data.opcoes[3].value
+    recompensa_str = contexto.interaction.data.opcoes[4].value
+
+    nivel_min = tryparse(Int, nivel_min_str)
+    nivel_max = tryparse(Int, nivel_max_str)
+    recompensa = tryparse(Int, recompensa_str)
+
+    if isnothing(nivel_min) || nivel_min < 1
+        return reply(cliente, contexto, content="Nível mínimo inválido. Deve ser um número inteiro maior ou igual a 1.")
+    end
+    if isnothing(nivel_max) || nivel_max < nivel_min
+        return reply(cliente, contexto, content="Nível máximo inválido. Deve ser um número inteiro maior ou igual ao nível mínimo.")
+    end
+     if isnothing(recompensa) || recompensa < 0
+        return reply(cliente, contexto, content="Recompensa inválida. Deve ser um número inteiro não negativo.")
+    end
+
+    usuario = contexto.interaction.membro
+    guild_future = get_guild(cliente, contexto.interaction.id_guilda)
+    guild = fetch(guild_future).val
+     if isnothing(guild)
+         @error "Não foi possível obter informações da Guild $(contexto.interaction.id_guilda) para /tiers"
+         return reply(cliente, contexto, content="Erro ao obter informações do servidor.")
+    end
+    permissoes = Ekztazy.permissions(usuario, guild)
+    if !has_permission(permissoes, Ekztazy.PERM_ADMINISTRATOR)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você precisa ser administrador para usar este comando."))
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    tiers_servidor = get!(dados_servidor, "tiers", Dict{String, Any}())
+    tiers_servidor[tier_nome] = Dict(
+        "nivel_min" => nivel_min,
+        "nivel_max" => nivel_max,
+        "recompensa" => recompensa
+    )
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="Tier '$tier_nome' definido para níveis $nivel_min-$nivel_max com recompensa de $recompensa moedas.")
+    @info "Tier '$tier_nome' configurado no servidor $id_servidor por $(usuario.user.username)."
+end
+
+"""
+    prob_handler_comando_crime(contexto)
+
+Handler do comando `/probabilidade_crime`. Define a probabilidade de sucesso em crimes.
+"""
+function prob_handler_comando_crime(contexto)
+    @info "Comando /probabilidade_crime foi acionado por $(contexto.interaction.membro.user.username)"
+    if isempty(contexto.interaction.data.opcoes)
+        return reply(cliente, contexto, content="Por favor, forneça a probabilidade de sucesso do crime (0-100).")
+    end
+
+    probabilidade_str = contexto.interaction.data.opcoes[1].value
+    probabilidade = tryparse(Int, probabilidade_str)
+
+    if isnothing(probabilidade) || !(0 <= probabilidade <= 100)
+        return reply(cliente, contexto, content="Probabilidade inválida. Por favor, insira um número inteiro entre 0 e 100.")
+    end
+
+    id_servidor = string(contexto.interaction.id_guilda)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    usuario = contexto.interaction.membro
+    guild_future = get_guild(cliente, contexto.interaction.id_guilda)
+    guild = fetch(guild_future).val
+     if isnothing(guild)
+         @error "Não foi possível obter informações da Guild $(contexto.interaction.id_guilda) para /probabilidade_crime"
+         return reply(cliente, contexto, content="Erro ao obter informações do servidor.")
+    end
+    permissoes = Ekztazy.permissions(usuario, guild)
+    if !has_permission(permissoes, Ekztazy.PERM_ADMINISTRATOR)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você precisa ser administrador para usar este comando."))
+    end
+
+    dados_servidor["probabilidade_crime"] = probabilidade
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="Probabilidade de sucesso no crime definida para $probabilidade%.")
+    @info "Probabilidade de crime definida como $probabilidade% no servidor $id_servidor por $(usuario.user.username)."
+end
+
+"""
+    handler_comando_rip(contexto)
+
+Handler do comando `/rip`. Remove permanentemente um personagem.
+"""
+function handler_comando_rip(contexto)
+    @info "Comando /rip foi acionado por $(contexto.interaction.membro.user.username)"
+    if isempty(contexto.interaction.data.opcoes)
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem a ser removido.")
+    end
+
+    personagem_nome = contexto.interaction.data.opcoes[1].value
+    id_servidor = string(contexto.interaction.id_guilda)
+    id_usuario_invocador = string(contexto.interaction.membro.user.id)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    id_usuario_dono = nothing
+    personagem_encontrado = false
+    for (id_dono, personagens_dono) in dados_servidor["personagens"]
+        if haskey(personagens_dono, personagem_nome)
+            id_usuario_dono = id_dono
+            personagem_encontrado = true
+            break
+        end
+    end
+
+    if !personagem_encontrado
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Personagem não encontrado."))
+    end
+
+    eh_dono = id_usuario_invocador == id_usuario_dono
+    eh_admin = false
+    guild_future = get_guild(cliente, contexto.interaction.id_guilda)
+    guild = fetch(guild_future).val
+    if !isnothing(guild)
+        permissoes = Ekztazy.permissions(contexto.interaction.membro, guild)
+        eh_admin = has_permission(permissoes, Ekztazy.PERM_ADMINISTRATOR)
+    else
+        @error "Não foi possível obter informações da Guild $(contexto.interaction.id_guilda) para /rip"
+    end
+
+    if !(eh_dono || eh_admin)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "permissao", "Você não tem permissão para remover este personagem."))
+    end
+
+    reply(cliente, contexto, content="**ALERTA:** Tem certeza que deseja eliminar permanentemente o personagem **$personagem_nome**? Esta ação não pode ser desfeita. Responda `sim` para confirmar.")
+
+    resposta = aguardar_mensagem(contexto)
+    if resposta === nothing || lowercase(strip(resposta)) != "sim"
+        return reply(cliente, contexto, content="Eliminação cancelada.")
+    end
+
+    delete!(dados_servidor["personagens"][id_usuario_dono], personagem_nome)
+    if isempty(dados_servidor["personagens"][id_usuario_dono])
+        delete!(dados_servidor["personagens"], id_usuario_dono)
+        @info "Usuário $id_usuario_dono não possui mais personagens após remoção de $personagem_nome."
+    end
+
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="Personagem '$personagem_nome' foi eliminado com sucesso.")
+    @info "Personagem '$personagem_nome' (Dono: $id_usuario_dono) eliminado por $(contexto.interaction.membro.user.username)."
+end
+
+"""
+    handler_comando_inss(contexto)
+
+Handler do comando `/inss`. Aposenta um personagem, movendo seus dados para uma seção separada.
+"""
+function handler_comando_inss(contexto)
+    @info "Comando /inss foi acionado por $(contexto.interaction.membro.user.username)"
+    if isempty(contexto.interaction.data.opcoes)
+        return reply(cliente, contexto, content="Por favor, forneça o nome do personagem a ser aposentado.")
+    end
+
+    personagem_nome = contexto.interaction.data.opcoes[1].value
+    id_servidor = string(contexto.interaction.id_guilda)
+    id_usuario = string(contexto.interaction.membro.user.id)
+    dados_servidor = carregar_dados_servidor(id_servidor)
+
+    personagens_usuario = get(dados_servidor["personagens"], id_usuario, Dict())
+    if !haskey(personagens_usuario, personagem_nome)
+        msg_erro = get(get(config, "messages", Dict()), "erros", Dict())
+        return reply(cliente, contexto, content=get(msg_erro, "personagem_nao_encontrado", "Você não possui um personagem com este nome."))
+    end
+    dados_personagem = personagens_usuario[personagem_nome]
+
+    aposentados = get!(dados_servidor, "aposentados", Dict{String, Any}())
+
+    aposentados[personagem_nome] = dados_personagem
+    delete!(personagens_usuario, personagem_nome)
 
     if isempty(personagens_usuario)
         delete!(dados_servidor["personagens"], id_usuario)
-    else
-        dados_servidor["personagens"][id_usuario] = personagens_usuario
     end
 
-    salvar_dados_servidor(id_servidor, dados_servidor) # Dependência externa
-    reply(cliente, contexto, content="Personagem $personagem foi aposentado com sucesso e seus dados foram preservados.") # Assumindo 'cliente'
+    salvar_dados_servidor(id_servidor, dados_servidor)
+    reply(cliente, contexto, content="Personagem '$personagem_nome' foi aposentado com sucesso. Seus dados foram arquivados.")
+    @info "Personagem '$personagem_nome' (User: $id_usuario) aposentado no servidor $id_servidor."
 end
 
-end # fim do module ComandosDiscord
+# Fim do código de comandos_discord.jl (sem 'end' de módulo)

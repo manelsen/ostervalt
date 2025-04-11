@@ -1,5 +1,9 @@
 # Configuração e inicialização (variáveis de ambiente, logging)
-using DotEnv, Logging, LoggingExtras
+# Este arquivo é incluído diretamente no módulo OstervaltBot.
+
+using DotEnv, Logging, LoggingExtras, YAML
+
+# Não precisa de export aqui, pois as constantes estarão no escopo OstervaltBot
 
 # Carregar .env
 DotEnv.load!()
@@ -12,7 +16,7 @@ const LOG_LEVEL = get(ENV, "LOG_LEVEL", "INFO")
 const GUILD = parse(Int, get(ENV, "GUILD", "0"))
 
 # Configuração de logging
-logger = ConsoleLogger(stdout, Logging.Info)
+const logger = ConsoleLogger(stdout, Logging.Info) # Tornar logger constante
 global_logger(logger)
 
 if isempty(TOKEN) || APPLICATION_ID == 0
@@ -20,7 +24,14 @@ if isempty(TOKEN) || APPLICATION_ID == 0
 end
 
 function carregar_configuracao()
-    YAML.load_file("config.yaml")
+    try
+        return YAML.load_file("config.yaml")
+    catch e
+        @error "Erro ao carregar config.yaml. Verifique se o arquivo existe e está formatado corretamente." exception=(e, catch_backtrace())
+        return Dict() # Retorna um dicionário vazio em caso de erro
+    end
 end
 
 const config = carregar_configuracao()
+
+# Fim do código de config.jl (sem 'end' de módulo)
