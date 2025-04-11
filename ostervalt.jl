@@ -329,7 +329,23 @@ function obter_descricao_item(dados_servidor::Dict, nome_item::String)
     return "Descrição não disponível."
 end
 
-# Função duplicada removida: criar_personagem
+function criar_personagem(server_id::String, user_id::String, nome::String)
+    server_data = load_server_data(server_id)
+
+    limite_personagens = get(get(config, "limites", Dict()), "personagens_por_usuario", 2)
+    user_characters = get(server_data["characters"], user_id, Dict())
+
+    if length(user_characters) >= limite_personagens
+        return "Você já possui $limite_personagens personagens. Não é possível criar mais."
+    end
+
+    if haskey(user_characters, nome)
+        return "Você já tem um personagem com o nome $nome. Por favor, escolha outro nome."
+    end
+
+    new_character = Dict(
+        "marcos" => 0,
+        "inventory" => [],
         "dinheiro" => 0,
         "nivel" => 1,
         "ultimo_trabalho" => nothing,
