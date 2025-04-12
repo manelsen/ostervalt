@@ -3,3 +3,9 @@
 memory-bank/*
 lib/*
 *.json
+project_journal/*
+**/__pycache__/*
+*.db
+*.ini
+*.mako
+ostervalt/infraestrutura/persistencia/migrations/README
