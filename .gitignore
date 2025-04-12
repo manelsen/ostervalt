@@ -1,3 +1,4 @@
 .roo*
 .env
 memory-bank/*
+lib/*
