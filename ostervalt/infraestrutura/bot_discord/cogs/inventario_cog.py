@@ -2,24 +2,26 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+# Importar casos de uso e DTOs necessários
+from ostervalt.nucleo.casos_de_uso.listar_inventario import ListarInventario
+from ostervalt.nucleo.casos_de_uso.adicionar_item_inventario import AdicionarItemInventario
+from ostervalt.nucleo.casos_de_uso.remover_item_inventario import RemoverItemInventario
+from ostervalt.nucleo.casos_de_uso.dtos import ComandoDTO, InventarioDTO # Adicionar InventarioDTO se existir
+
 class InventarioCog(commands.Cog):
-    def __init__(self, bot):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        listar_inventario_uc: ListarInventario,
+        adicionar_item_uc: AdicionarItemInventario,
+        remover_item_uc: RemoverItemInventario,
+    ):
         self.bot = bot
+        self.listar_inventario_uc = listar_inventario_uc
+        self.adicionar_item_uc = adicionar_item_uc
+        self.remover_item_uc = remover_item_uc
+        print("Cog Inventario carregado.") # Log para depuração
 
-    @app_commands.command(name="inventario", description="Visualiza seu inventário")
-    async def inventario(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Visualizando inventário...")
-
-    @app_commands.command(name="additem", description="Adiciona um item ao inventário (comando de teste)")
-    async def adicionar_item(self, interaction: discord.Interaction, item_nome: str):
-        await interaction.response.send_message(f"Adicionando item {item_nome} ao inventário...")
-
-    @app_commands.command(name="remitem", description="Remove um item do inventário (comando de teste)")
-    async def remover_item(self, interaction: discord.Interaction, item_nome: str):
-        await interaction.response.send_message(f"Removendo item {item_nome} do inventário...")
-
-async def setup(bot):
-    await bot.add_cog(InventarioCog(bot))
     # --- Comandos Slash ---
 
     @app_commands.command(name="inventario", description="Mostra o inventário do seu personagem ativo.")

@@ -39,6 +39,8 @@ async def carregar_cogs(bot: commands.Bot, container):
             'obter_item_uc',
             'listar_itens_uc',
         ),
+        'AdminCog': (), # Sem dependências de UC por enquanto
+        'UtilCog': (),  # Sem dependências de UC por enquanto
         # Adicione outros Cogs e suas dependências aqui
     }
 
@@ -77,6 +79,13 @@ async def carregar_cogs(bot: commands.Bot, container):
                              print(f"⚠️ Erro ao resolver/instanciar dependências para {cog_class_name}: {e}")
                              print(f"   Dependências requeridas: {nomes_servicos}")
 
+                    elif cog_class_name in ['AdminCog', 'UtilCog']: # Cogs sem dependências explícitas por enquanto
+                         try:
+                              cog_instance = cog_class(bot) # Instancia apenas com o bot
+                              await bot.add_cog(cog_instance)
+                              print(f"✅ Cog '{cog_class_name}' carregado e adicionado com sucesso (sem UCs injetadas).")
+                         except Exception as e:
+                              print(f"⚠️ Erro ao instanciar {cog_class_name} (sem UCs): {e}")
                     else:
                         print(f"⚠️ Dependências não definidas para o Cog '{cog_class_name}' no loader.py. Pulando.")
 

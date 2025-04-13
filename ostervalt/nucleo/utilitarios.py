@@ -1,13 +1,15 @@
 import datetime
+import random
+import math
 
-def verificar_cooldown(ultimo_tempo: datetime.datetime | None, intervalo_segundos: int, tempo_atual: datetime.datetime) -> bool:
+def verificar_cooldown(ultimo_tempo: datetime.datetime | None, intervalo_segundos: int, tempo_atual) -> bool: # tempo_atual sem tipo definido
     """
     Verifica se o cooldown de uma ação já expirou.
 
     Args:
         ultimo_tempo (datetime | None): Timestamp da última vez que a ação foi executada.
         intervalo_segundos (int): Intervalo de cooldown em segundos.
-        tempo_atual (datetime): Timestamp atual.
+        tempo_atual: Timestamp atual. # Removido tipo datetime.datetime
 
     Returns:
         bool: True se o cooldown expirou ou se nunca foi executado antes, False caso contrário.
@@ -103,3 +105,26 @@ def formatar_marcos(marcos_partes: int) -> str:
         return f"{full_marcos} e {remaining_parts}/16 Marcos"
         return False, -perda
     return 0  # Recompensa padrão caso não encontre tier
+
+
+def marcos_to_gain(level: int, config: dict) -> int:
+    """
+    Determina quantos marcos um personagem ganha ao usar o comando /up.
+
+    Args:
+        level (int): Nível atual do personagem.
+        config (dict): Dicionário de configuração carregado.
+
+    Returns:
+        int: Quantidade de marcos a ganhar.
+    """
+    # Acesso à configuração agora é passado como argumento
+    marcos_por_nivel = config.get("progressao", {}).get("marcos_por_nivel", {})
+    if level <= 4:
+        return marcos_por_nivel.get("1-4", 16)
+    elif level <= 12:
+        return marcos_por_nivel.get("5-12", 4)
+    elif level <= 16:
+        return marcos_por_nivel.get("13-16", 2)
+    else:
+        return marcos_por_nivel.get("17-20", 1)

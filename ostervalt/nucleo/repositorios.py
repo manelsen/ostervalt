@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from .entidades.usuario import Usuario
 from .entidades.transacao import Transacao
-from .entidades.relatorio import Relatorio
+# from .entidades.relatorio import Relatorio # Removido - Entidade não encontrada
 from .entidades.personagem import Personagem
 from .entidades.item import Item, ItemInventario
 
@@ -117,11 +117,11 @@ class RepositorioTransacoes(ABC):
 
 class RepositorioRelatorios(ABC):
     @abstractmethod
-    def gerar_relatorio_financeiro(self, periodo: str) -> Relatorio:
+    def gerar_relatorio_financeiro(self, periodo: str): # -> Relatorio: # Removido Type Hint - Entidade não encontrada
         """Gera um relatório financeiro consolidado para o período especificado."""
         pass
 
     @abstractmethod
-    def gerar_relatorio_atividade(self, usuario_id: int) -> Relatorio:
+    def gerar_relatorio_atividade(self, usuario_id: int): # -> Relatorio: # Removido Type Hint - Entidade não encontrada
         """Gera um relatório de atividade detalhado para um usuário."""
         pass

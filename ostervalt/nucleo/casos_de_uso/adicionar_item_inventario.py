@@ -11,6 +11,6 @@ class AdicionarItemInventario:
         if not item:
             raise ValueError(f"Item com ID {item_id} não encontrado.")
         
-        item_inventario = ItemInventario(item_id=item_id, personagem_id=personagem_id, quantidade=quantidade)
+        item_inventario = ItemInventario(id=None, item_id=item_id, personagem_id=personagem_id, quantidade=quantidade)
         self.repositorio_inventario.adicionar_item(item_inventario)
         return item_inventario

@@ -3,7 +3,7 @@ import random
 from ostervalt.nucleo.repositorios import RepositorioPersonagens
 from ostervalt.nucleo.entidades.personagem import Personagem
 from ostervalt.nucleo.utilitarios import verificar_cooldown, calcular_recompensa_trabalho
-from ostervalt.infraestrutura.configuracao import Configuracao  # Assuming config is injected
+from ostervalt.infraestrutura.configuracao.configuracao import Configuracao  # Importa a classe do módulo
 from .dtos import ResultadoTrabalhoDTO
 
 class RealizarTrabalho:
@@ -11,19 +11,23 @@ class RealizarTrabalho:
         self.repositorio_personagens = repositorio_personagens
         self.configuracao = configuracao
 
-    def executar(self, personagem_id: int) -> ResultadoTrabalhoDTO:
+    def executar(self, personagem_id: int, tempo_atual=None) -> ResultadoTrabalhoDTO: # Adicionado tempo_atual como argumento opcional
         personagem = self.repositorio_personagens.obter_por_id(personagem_id)
         if not personagem:
             raise ValueError(f"Personagem com ID {personagem_id} não encontrado.")
 
         intervalo_trabalhar = self.configuracao.obter("limites").get("intervalo_trabalhar")
         ultimo_tempo_trabalho = personagem.ultimo_tempo_trabalho
-        tempo_atual = datetime.datetime.now()
+        if tempo_atual is None: # Se tempo_atual não foi passado, usa datetime.now()
+            tempo_atual = datetime.datetime.now()
 
-        if not verificar_cooldown(ultimo_tempo_trabalho, intervalo_trabalhar, tempo_atual):
-            tempo_restante = intervalo_trabalhar - delta.total_seconds()
-            tempo_restante_formatado = datetime.timedelta(seconds=tempo_restante)
-            raise ValueError(f"Ação de trabalho está em cooldown. Tempo restante: {tempo_restante_formatado}.") # Melhorar mensagem de erro
+        if not verificar_cooldown(ultimo_tempo_trabalho, intervalo_trabalhar, tempo_atual=tempo_atual): # Passar tempo_atual para verificar_cooldown
+            # Calcular tempo restante corretamente
+            delta_segundos = (tempo_atual - ultimo_tempo_trabalho).total_seconds()
+            tempo_restante = intervalo_trabalhar - delta_segundos
+            # Formatar para hh:mm:ss (aproximado)
+            tempo_restante_formatado = str(datetime.timedelta(seconds=int(tempo_restante)))
+            raise ValueError(f"Ação de trabalho está em cooldown. Tempo restante: {tempo_restante_formatado}.")
 
         nivel_personagem = personagem.nivel
         tiers_config = self.configuracao.obter("tiers")

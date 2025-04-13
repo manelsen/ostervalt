@@ -9,3 +9,4 @@ project_journal/*
 *.ini
 *.mako
 ostervalt/infraestrutura/persistencia/migrations/README
+ostervalt.egg-info/*

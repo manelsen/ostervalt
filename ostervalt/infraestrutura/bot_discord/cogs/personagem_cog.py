@@ -2,9 +2,25 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+# Importar casos de uso e DTOs necessários
+from ostervalt.nucleo.casos_de_uso.criar_personagem import CriarPersonagem
+from ostervalt.nucleo.casos_de_uso.obter_personagem import ObterPersonagem
+from ostervalt.nucleo.casos_de_uso.listar_personagens import ListarPersonagens
+from ostervalt.nucleo.casos_de_uso.dtos import ComandoDTO, PersonagemDTO, ListaPersonagensDTO # Adicionar DTOs
+
 class PersonagemCog(commands.Cog):
-    def __init__(self, bot):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        criar_personagem_uc: CriarPersonagem,
+        obter_personagem_uc: ObterPersonagem,
+        listar_personagens_uc: ListarPersonagens,
+    ):
         self.bot = bot
+        self.criar_personagem_uc = criar_personagem_uc
+        self.obter_personagem_uc = obter_personagem_uc
+        self.listar_personagens_uc = listar_personagens_uc
+        print("Cog Personagem carregado.") # Log para depuração
 
     @app_commands.command(name="criar", description="Cria um novo personagem")
     async def criar_personagem(self, interaction: discord.Interaction, nome: str):

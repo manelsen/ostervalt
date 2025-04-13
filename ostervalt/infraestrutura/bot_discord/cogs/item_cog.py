@@ -74,7 +74,7 @@ class ItemCog(commands.Cog):
             for item in resultado_dto.itens:
                  embed.add_field(
                     name=f"{item.nome} (ID: {item.id})",
-                    value=f"Preço: 🪙 {item.preco}\n*'{item.descricao}'*",
+                    value=f"Valor: 🪙 {item.valor}\n*'{item.descricao}'*", # Corrigido para item.valor
                     inline=False
                 )
             # TODO: Adicionar paginação se a lista for muito grande

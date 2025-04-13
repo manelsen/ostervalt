@@ -1,3 +1,5 @@
+from typing import Optional
+
 from dataclasses import dataclass
 
 @dataclass
@@ -29,7 +31,7 @@ class ItemInventario:
         item_id (int): ID do item.
         quantidade (int): Quantidade possuída.
     """
-    id: int
     personagem_id: int
     item_id: int
     quantidade: int
+    id: Optional[int] = None # ID é gerado pelo banco, opcional na criação
