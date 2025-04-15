@@ -16,8 +16,7 @@ async def carregar_cogs(bot: commands.Bot, container):
     cogs_dir = os.path.join(os.path.dirname(__file__), 'cogs')
     print(f"Procurando Cogs em: {cogs_dir}")
 
-    # Mapeamento de Cogs para suas dependências (casos de uso)
-    # Isso será usado para injetar as dependências corretas ao adicionar o Cog
+    # Mapeamento de Cogs para suas dependências (casos de uso e repositórios)
     # Os nomes das chaves devem corresponder aos nomes das classes Cog
     # Os valores são tuplas dos nomes dos serviços no container
     dependencias_cogs = {
@@ -25,22 +24,32 @@ async def carregar_cogs(bot: commands.Bot, container):
             'criar_personagem_uc',
             'obter_personagem_uc',
             'listar_personagens_uc',
+            'repo_personagens', # Adicionado para /inss
         ),
         'EconomiaCog': (
             'realizar_trabalho_uc',
             'cometer_crime_uc',
+            'obter_personagem_uc',
+            'listar_personagens_uc',
+            'repo_config_servidor',
         ),
         'InventarioCog': (
             'listar_inventario_uc',
-            'adicionar_item_inventario_uc', # Nome do serviço no container
-            'remover_item_inventario_uc',   # Nome do serviço no container
+            'adicionar_item_inventario_uc',
+            'remover_item_inventario_uc',
+            'listar_personagens_uc',
         ),
         'ItemCog': (
             'obter_item_uc',
             'listar_itens_uc',
         ),
-        'AdminCog': (), # Sem dependências de UC por enquanto
-        'UtilCog': (),  # Sem dependências de UC por enquanto
+        'AdminCog': (
+            'repo_config_servidor',
+            'repo_estoque_loja',
+            'repo_personagens',
+            'repo_itens',
+        ),
+        'UtilCog': ('repo_personagens', 'repo_config_servidor'),
         # Adicione outros Cogs e suas dependências aqui
     }
 
@@ -67,27 +76,29 @@ async def carregar_cogs(bot: commands.Bot, container):
                     # Obtém as dependências necessárias para este Cog
                     if cog_class_name in dependencias_cogs:
                         nomes_servicos = dependencias_cogs[cog_class_name]
-                        # Obtém as instâncias dos casos de uso do container
-                        try:
-                            casos_de_uso = [container.resolve(nome) for nome in nomes_servicos]
-                            # Instancia o Cog com o bot e as dependências injetadas
-                            cog_instance = cog_class(bot, *casos_de_uso)
-                            # Adiciona o Cog instanciado ao bot
-                            await bot.add_cog(cog_instance)
-                            print(f"✅ Cog '{cog_class_name}' carregado e adicionado com sucesso.")
-                        except Exception as e: # Captura erro na resolução ou instanciação
-                             print(f"⚠️ Erro ao resolver/instanciar dependências para {cog_class_name}: {e}")
-                             print(f"   Dependências requeridas: {nomes_servicos}")
-
-                    elif cog_class_name in ['AdminCog', 'UtilCog']: # Cogs sem dependências explícitas por enquanto
-                         try:
-                              cog_instance = cog_class(bot) # Instancia apenas com o bot
-                              await bot.add_cog(cog_instance)
-                              print(f"✅ Cog '{cog_class_name}' carregado e adicionado com sucesso (sem UCs injetadas).")
-                         except Exception as e:
-                              print(f"⚠️ Erro ao instanciar {cog_class_name} (sem UCs): {e}")
+                        # Obtém as instâncias dos casos de uso/repositórios do container
+                        # Verifica se há serviços a serem resolvidos
+                        if nomes_servicos: # Se há dependências listadas
+                            try:
+                                # Resolve casos de uso ou repositórios
+                                dependencias = [container.resolve(nome) for nome in nomes_servicos]
+                                # Instancia o Cog com o bot e as dependências injetadas
+                                cog_instance = cog_class(bot, *dependencias)
+                                # Adiciona o Cog instanciado ao bot
+                                await bot.add_cog(cog_instance)
+                                print(f"✅ Cog '{cog_class_name}' carregado e adicionado com sucesso com dependências.")
+                            except Exception as e: # Captura erro na resolução ou instanciação
+                                print(f"⚠️ Erro ao resolver/instanciar dependências para {cog_class_name}: {e}")
+                                print(f"   Dependências requeridas: {nomes_servicos}")
+                        else: # Cogs sem dependências listadas (tupla vazia)
+                            try:
+                                cog_instance = cog_class(bot) # Instancia apenas com o bot
+                                await bot.add_cog(cog_instance)
+                                print(f"✅ Cog '{cog_class_name}' carregado e adicionado com sucesso (sem dependências injetadas).")
+                            except Exception as e:
+                                print(f"⚠️ Erro ao instanciar {cog_class_name} (sem dependências): {e}")
                     else:
-                        print(f"⚠️ Dependências não definidas para o Cog '{cog_class_name}' no loader.py. Pulando.")
+                        print(f"⚠️ Dependências não definidas para o Cog '{cog_class_name}' no dicionário dependencias_cogs. Pulando injeção.")
 
                 else:
                     print(f"⚠️ Nenhuma classe Cog encontrada em {module_path}.")

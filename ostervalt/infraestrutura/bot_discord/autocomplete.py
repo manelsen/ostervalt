@@ -6,7 +6,6 @@ from discord import app_commands
 from typing import List
 
 # TODO: Importar corretamente a função de persistência
-# from ostervalt.infraestrutura.persistencia.armazenamento_servidor import load_server_data
 
 # Placeholder para load_server_data
 def load_server_data(server_id):
@@ -91,7 +90,7 @@ async def autocomplete_character(interaction: discord.Interaction, current: str)
     server_data = load_server_data(server_id)
     user_characters = server_data.get("characters", {}).get(user_id, {})
     # Ordenar os nomes dos personagens
-    character_names = sorted([name for name in user_characters if current.lower() in name.lower()])
+    character_names = sorted([char_name for char_name in user_characters if current.lower() in char_name.lower()])
     return [
         app_commands.Choice(name=char_name, value=char_name)
         for char_name in character_names
@@ -138,7 +137,7 @@ async def autocomplete_character_for_user(interaction: discord.Interaction, curr
     server_data = load_server_data(server_id)
     user_characters = server_data.get("characters", {}).get(target_user_id, {})
     # Ordenar os nomes dos personagens
-    character_names = sorted([name for name in user_characters if current.lower() in name.lower()])
+    character_names = sorted([char_name for char_name in user_characters if current.lower() in char_name.lower()])
     return [
         app_commands.Choice(name=char_name, value=char_name)
         for char_name in character_names

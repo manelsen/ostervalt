@@ -1,73 +1,96 @@
 # -*- coding: utf-8 -*-
 import discord
-import os
-import json
-import polars as pl
 import asyncio
-import yaml
-import datetime # Adicionado para backup filename
+import json
+import random
+import os
+import datetime
+import traceback # Para log de erro
 from discord.ext import commands
-from discord import app_commands, Member, Role
+from discord import app_commands, Role, Member
+from typing import List # Adicionado para autocomplete
 
-# TODO: Importar corretamente as funções de persistência e config
-# from ostervalt.infraestrutura.persistencia.armazenamento_servidor import load_server_data, save_server_data, update_item_price
-# from ostervalt.infraestrutura.configuracao.loader import load_config # Supondo que load_config esteja aqui
-# config = load_config()
-
-# Placeholder para as funções importadas até que a injeção de dependência seja configurada
-# Estas funções precisam ser substituídas pela lógica real ou injeção de dependência
-def load_server_data(server_id):
-    print(f"[Placeholder] Carregando dados para server_id: {server_id}")
-    # Simula a estrutura básica esperada
-    return {
-            "characters": {},
-            "stock_items": {},
-            "shop_items": None,
-            "special_roles": {"saldo": [], "marcos": []},
-            "messages": {"trabalho": [], "crime": []},
-            "tiers": {},
-            "aposentados": {},
-            "prices": {},
-            "probabilidade_crime": 50
-        }
-def save_server_data(server_id, data):
-    print(f"[Placeholder] Salvando dados para server_id: {server_id}")
-    pass
-def update_item_price(server_id, item_name, value):
-    print(f"[Placeholder] Atualizando preço para item: {item_name} no server_id: {server_id}")
-    pass
-# Placeholder para config
-config = {
-    "messages": {
-        "erros": {
-            "permissao": "Você não tem permissão para usar este comando."
-            }
-        },
-    "precos_padroes": {
-        "item_padrao": 100
-        }
-    }
+# Importar tipos dos repositórios e entidades
+from ostervalt.infraestrutura.persistencia.repositorio_configuracao_servidor import RepositorioConfiguracaoServidor
+from ostervalt.infraestrutura.persistencia.repositorio_estoque_loja import RepositorioEstoqueLoja
+from ostervalt.infraestrutura.persistencia.repositorio_personagens import RepositorioPersonagensSQLAlchemy
+from ostervalt.infraestrutura.persistencia.repositorio_itens import RepositorioItensSQLAlchemy
+from ostervalt.infraestrutura.persistencia.models import EstoqueLojaItemModel, ItemModel
+from ostervalt.nucleo.entidades.item import Item # Adicionado para autocomplete
+from ostervalt.nucleo.entidades.personagem import Personagem # Adicionado para autocomplete
 
 
 class AdminCog(commands.Cog):
     """Cog para comandos administrativos e de configuração."""
-    def __init__(self, bot: commands.Bot):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        repo_config_servidor: RepositorioConfiguracaoServidor,
+        repo_estoque_loja: RepositorioEstoqueLoja,
+        repo_personagens: RepositorioPersonagensSQLAlchemy,
+        repo_itens: RepositorioItensSQLAlchemy,
+    ):
         self.bot = bot
+        self.repo_config_servidor = repo_config_servidor
+        self.repo_estoque_loja = repo_estoque_loja
+        self.repo_personagens = repo_personagens
+        self.repo_itens = repo_itens
         print("Cog Admin carregado.")
 
-    # Comandos de prefixo (movidos para Cog)
+    # --- Autocomplete Methods ---
+    async def autocomplete_character_for_user(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        """Autocompleta com personagens de um usuário específico."""
+        if not interaction.guild_id: return []
+        target_user = interaction.namespace.usuario # Nome da opção é 'usuario' nos comandos /dinheiro, /saldo, /rip
+        if not isinstance(target_user, Member):
+             print("Autocomplete Admin: Não foi possível determinar o usuário alvo.")
+             return []
+
+        target_user_id = target_user.id
+        server_id = interaction.guild_id
+        try:
+            personagens: List[Personagem] = self.repo_personagens.listar_por_usuario(target_user_id, server_id)
+            choices = [
+                app_commands.Choice(name=f"{p.nome}{' (Aposentado)' if p.status == StatusPersonagem.APOSENTADO else ''}", value=p.nome)
+                for p in personagens
+                if current.lower() in p.nome.lower()
+            ]
+            choices.sort(key=lambda c: '(Aposentado)' in c.name)
+            return choices[:25]
+        except Exception as e:
+            print(f"Erro no autocomplete_character_for_user (AdminCog): {e}")
+            return []
+
+    async def autocomplete_item(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        """Autocompleta com nomes de itens mestres."""
+        try:
+            itens: List[Item] = self.repo_itens.listar_todos()
+            choices = [
+                app_commands.Choice(name=i.nome, value=i.nome)
+                for i in itens if current.lower() in i.nome.lower()
+            ]
+            return choices[:25]
+        except Exception as e:
+            print(f"Erro no autocomplete_item (AdminCog): {e}")
+            return []
+
+    # --- Comandos de prefixo ---
     @commands.command(name="sync_commands")
     @commands.is_owner()
     async def sync_commands_prefix(self, ctx):
         """Sincroniza os comandos de slash com o Discord."""
         guild = ctx.guild
-        if guild:
-            self.bot.tree.clear_commands(guild=guild)
-            synced = await self.bot.tree.sync(guild=guild)
-            await ctx.send(f"Sincronizados {len(synced)} comandos para este servidor.")
-        else:
-             synced = await self.bot.tree.sync()
-             await ctx.send(f"Sincronizados {len(synced)} comandos globais.")
+        try:
+            if guild:
+                self.bot.tree.clear_commands(guild=guild)
+                synced = await self.bot.tree.sync(guild=guild)
+                await ctx.send(f"Sincronizados {len(synced)} comandos para este servidor.")
+            else:
+                 synced = await self.bot.tree.sync()
+                 await ctx.send(f"Sincronizados {len(synced)} comandos globais.")
+        except Exception as e:
+            await ctx.send(f"Erro ao sincronizar: {e}")
+            traceback.print_exc()
 
 
     @commands.command(name="list_commands")
@@ -75,15 +98,18 @@ class AdminCog(commands.Cog):
     async def list_commands_prefix(self, ctx):
         """Lista todos os comandos disponíveis no servidor."""
         guild = ctx.guild
-        if guild:
-            guild_commands = await self.bot.tree.fetch_commands(guild=guild)
-            await ctx.send(f"Comandos do servidor: {', '.join(cmd.name for cmd in guild_commands)}")
-        else:
-             global_commands = await self.bot.tree.fetch_commands()
-             await ctx.send(f"Comandos globais: {', '.join(cmd.name for cmd in global_commands)}")
+        try:
+            if guild:
+                guild_commands = await self.bot.tree.fetch_commands(guild=guild)
+                await ctx.send(f"Comandos do servidor: {', '.join(cmd.name for cmd in guild_commands)}")
+            else:
+                 global_commands = await self.bot.tree.fetch_commands()
+                 await ctx.send(f"Comandos globais: {', '.join(cmd.name for cmd in global_commands)}")
+        except Exception as e:
+             await ctx.send(f"Erro ao listar comandos: {e}")
 
 
-    # Comandos de aplicação (slash commands)
+    # --- Comandos de aplicação (slash commands) ---
     @app_commands.command(name="cargos", description="Define cargos com permissões especiais")
     @app_commands.describe(
         tipo="Tipo de permissão (saldo ou marcos)",
@@ -103,28 +129,34 @@ class AdminCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def cargos(self, interaction: discord.Interaction, tipo: str, acao: str, cargo: Role):
         """Gerencia os cargos com permissões especiais."""
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id) # Usar função importada
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
+        int_server_id = interaction.guild_id
+        key = f"cargos_{tipo}_ids"
 
-        if "special_roles" not in server_data: # Garantir que a chave existe
-             server_data["special_roles"] = {"saldo": [], "marcos": []}
-        if tipo not in server_data["special_roles"]: # Garantir que o tipo existe
-             server_data["special_roles"][tipo] = []
+        try:
+            cargos_lista = self.repo_config_servidor.obter_valor(int_server_id, key, default=[])
 
-        if acao == "add":
-            if cargo.id not in server_data["special_roles"][tipo]:
-                server_data["special_roles"][tipo].append(cargo.id)
-                await interaction.response.send_message(f"Cargo {cargo.name} adicionado às permissões de {tipo}.", ephemeral=True)
-            else:
-                await interaction.response.send_message(f"Cargo {cargo.name} já está nas permissões de {tipo}.", ephemeral=True)
-        elif acao == "remove":
-            if cargo.id in server_data["special_roles"][tipo]:
-                server_data["special_roles"][tipo].remove(cargo.id)
-                await interaction.response.send_message(f"Cargo {cargo.name} removido das permissões de {tipo}.", ephemeral=True)
-            else:
-                await interaction.response.send_message(f"Cargo {cargo.name} não estava nas permissões de {tipo}.", ephemeral=True)
+            if acao == "add":
+                if cargo.id not in cargos_lista:
+                    cargos_lista.append(cargo.id)
+                    self.repo_config_servidor.adicionar_ou_atualizar(int_server_id, key, cargos_lista)
+                    await interaction.response.send_message(f"Cargo {cargo.name} adicionado às permissões de {tipo}.", ephemeral=True)
+                else:
+                    await interaction.response.send_message(f"Cargo {cargo.name} já está nas permissões de {tipo}.", ephemeral=True)
+            elif acao == "remove":
+                if cargo.id in cargos_lista:
+                    cargos_lista.remove(cargo.id)
+                    self.repo_config_servidor.adicionar_ou_atualizar(int_server_id, key, cargos_lista)
+                    await interaction.response.send_message(f"Cargo {cargo.name} removido das permissões de {tipo}.", ephemeral=True)
+                else:
+                    await interaction.response.send_message(f"Cargo {cargo.name} não estava nas permissões de {tipo}.", ephemeral=True)
 
-        save_server_data(server_id, server_data) # Usar função importada
+        except Exception as e:
+            print(f"Erro ao gerenciar cargos para servidor {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao gerenciar cargos.", ephemeral=True)
 
     @app_commands.command(name="estoque", description="Gera um novo estoque para a loja")
     @app_commands.describe(
@@ -136,127 +168,85 @@ class AdminCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def estoque(self, interaction: discord.Interaction, common: int, uncommon: int, rare: int, very_rare: int):
         """Gera um novo estoque de itens para a loja."""
-        await interaction.response.defer(ephemeral=True) # Deferir a resposta
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
-        server_data["stock_items"] = {}
-
-        rarities = {
-            'common': common,
-            'uncommon': uncommon,
-            'rare': rare,
-            'very rare': very_rare
-        }
-
-        # TODO: Usar repositório de itens em vez de CSV direto
-        csv_file = f"items_{server_id}.csv" if os.path.exists(f"items_{server_id}.csv") else "items.csv"
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
+        await interaction.response.defer(ephemeral=True)
+        int_server_id = interaction.guild_id
 
         try:
-            all_items = pl.read_csv(csv_file, infer_schema_length=10000, null_values=["undefined"])
-        except FileNotFoundError:
-            await interaction.followup.send(f"Erro: O arquivo de itens '{csv_file}' não foi encontrado.", ephemeral=True)
-            return
-        except Exception as e: # Captura outros erros de leitura do Polars/CSV
-             await interaction.followup.send(f"Erro ao ler o arquivo de itens '{csv_file}': {e}", ephemeral=True)
-             return
+            self.repo_estoque_loja.limpar_estoque_servidor(int_server_id)
+            await interaction.followup.send("Estoque antigo limpo. Gerando novo estoque...", ephemeral=True)
 
+            rarities = {'common': common, 'uncommon': uncommon, 'rare': rare, 'very rare': very_rare}
+            preco_padrao_fallback = self.repo_config_servidor.obter_valor(int_server_id, 'preco_item_padrao', default=100)
+            itens_adicionados = []
 
-        await interaction.followup.send("Criando novo estoque. Por favor, defina os preços para cada item.", ephemeral=True)
+            for raridade_str, count_req in rarities.items():
+                if count_req <= 0: continue
 
-        for rarity, count in rarities.items():
-            # Filtrar itens da raridade correta
-            try:
-                available_items = all_items.filter(pl.col("Rarity").str.to_lowercase() == rarity.lower())
-            except pl.ColumnNotFoundError:
-                 await interaction.followup.send(f"Erro: Coluna 'Rarity' não encontrada no arquivo CSV '{csv_file}'. Verifique o cabeçalho.", ephemeral=True)
-                 return
-            except Exception as e:
-                 await interaction.followup.send(f"Erro ao filtrar itens por raridade '{rarity}': {e}", ephemeral=True)
-                 continue # Pula para a próxima raridade
+                itens_disponiveis: list[Item] = self.repo_itens.listar_por_raridade(raridade_str)
 
-            available_count = len(available_items)
+                if not itens_disponiveis:
+                    await interaction.followup.send(f"⚠️ Nenhum item encontrado para a raridade: {raridade_str}", ephemeral=True)
+                    continue
 
-            if available_count == 0:
-                 print(f"Nenhum item encontrado para a raridade: {rarity}")
-                 continue # Pula se não houver itens dessa raridade
+                available_count = len(itens_disponiveis)
+                count = min(count_req, available_count)
 
-            if available_count < count:
-                print(f"Aviso: Solicitados {count} itens {rarity}, mas apenas {available_count} disponíveis.")
-                count = available_count
+                if count_req > available_count:
+                     await interaction.followup.send(f"ℹ️ Solicitados {count_req} itens {raridade_str}, mas apenas {available_count} disponíveis.", ephemeral=True)
 
-            if count > 0:
-                try:
-                    items = available_items.sample(count, with_replacement=False, shuffle=True) # Adicionado shuffle
-                except Exception as e:
-                     await interaction.followup.send(f"Erro ao selecionar amostra de itens {rarity}: {e}", ephemeral=True)
-                     continue
+                itens_selecionados = random.sample(itens_disponiveis, count)
+                await interaction.followup.send(f"Definindo preços para {count} itens {raridade_str}:", ephemeral=True)
 
-                # Verificar se as colunas existem antes de acessá-las
-                required_cols = ['Name', 'Text']
-                missing_cols = [col for col in required_cols if col not in items.columns]
-                if missing_cols:
-                     await interaction.followup.send(f"Erro: Colunas ausentes no CSV para raridade {rarity}: {', '.join(missing_cols)}", ephemeral=True)
-                     continue
-
-
-                server_data["stock_items"][rarity] = {
-                    'Name': items['Name'].to_list(),
-                    'Value': [],
-                    'Quantity': [1] * count,
-                    'Text': items['Text'].fill_null("Descrição não disponível").to_list() # Tratar nulos
-                }
-
-                await interaction.followup.send(f"Definindo preços para itens {rarity}:", ephemeral=True)
-                for name in server_data["stock_items"][rarity]['Name']:
-                    price_set = False
+                for item_obj in itens_selecionados:
+                    preco_final = None
                     attempts = 0
-                    while not price_set and attempts < 3:
-                        await interaction.followup.send(f"Digite o preço para {name} (em moedas):", ephemeral=True)
+                    while preco_final is None and attempts < 3:
+                        await interaction.followup.send(f"Digite o preço para **{item_obj.nome}** (em moedas):", ephemeral=True)
                         try:
-                            # Usar self.bot.wait_for
                             price_message = await self.bot.wait_for(
                                 'message',
                                 check=lambda m: m.author == interaction.user and m.channel == interaction.channel and m.content.isdigit(),
                                 timeout=60.0
                             )
                             price = int(price_message.content)
-                            if price < 0:
-                                 await interaction.followup.send("O preço não pode ser negativo. Tente novamente.", ephemeral=True)
-                                 attempts += 1
-                                 continue
-
-                            server_data["stock_items"][rarity]['Value'].append(str(price))
-                            update_item_price(server_id, name, str(price)) # Usar função importada
-                            await interaction.followup.send(f"Preço de {name} definido como {price} moedas e salvo.", ephemeral=True)
-                            price_set = True
+                            if price >= 0: preco_final = price
+                            else:
+                                await interaction.followup.send("O preço não pode ser negativo. Tente novamente.", ephemeral=True)
+                                attempts += 1
                         except asyncio.TimeoutError:
-                            await interaction.followup.send(f"Tempo esgotado para {name}. Tentativa {attempts + 1} de 3.", ephemeral=True)
+                            await interaction.followup.send(f"Tempo esgotado para {item_obj.nome}. Tentativa {attempts + 1} de 3.", ephemeral=True)
                             attempts += 1
-                        except Exception as e: # Captura outros erros inesperados
-                             await interaction.followup.send(f"Erro inesperado ao processar preço para {name}: {e}", ephemeral=True)
-                             attempts += 1 # Considera como tentativa falha
+                        except Exception as e_price:
+                             await interaction.followup.send(f"Erro inesperado ao processar preço para {item_obj.nome}: {e_price}", ephemeral=True)
+                             attempts += 1
 
+                    if preco_final is None:
+                        preco_final = item_obj.valor
+                        await interaction.followup.send(f"Falha ao definir preço para {item_obj.nome}. Usando preço padrão de {preco_final} moedas.", ephemeral=True)
 
-                    if not price_set:
-                        preco_padrao = config.get("precos_padroes", {}).get("item_padrao", 100)
-                        await interaction.followup.send(f"Falha ao definir preço para {name}. Definindo preço padrão de {preco_padrao} moedas.", ephemeral=True)
-                        server_data["stock_items"][rarity]['Value'].append(str(preco_padrao))
-                        update_item_price(server_id, name, str(preco_padrao)) # Usar função importada
+                    item_estoque = EstoqueLojaItemModel(
+                        servidor_id=int_server_id,
+                        item_id=item_obj.id,
+                        quantidade=1,
+                        preco_especifico=preco_final
+                    )
+                    self.repo_estoque_loja.adicionar(item_estoque)
+                    itens_adicionados.append(f"{item_obj.nome} ({raridade_str}) - {preco_final} moedas")
+                    await interaction.followup.send(f"✅ Preço de {item_obj.nome} definido como {preco_final} moedas e adicionado ao estoque.", ephemeral=True)
 
-        save_server_data(server_id, server_data) # Usar função importada
+            if itens_adicionados:
+                summary = "✅ Novo estoque gerado com sucesso:\n" + "\n".join(f"- {item_info}" for item_info in itens_adicionados)
+            else:
+                summary = "ℹ️ Nenhum item foi adicionado ao estoque (verifique se existem itens cadastrados no banco de dados)."
+            await interaction.followup.send(summary, ephemeral=True)
 
-        summary = "Novo estoque criado com:\n"
-        for rarity, items_data in server_data.get("stock_items", {}).items():
-            item_count = len(items_data.get('Name', []))
-            if item_count > 0:
-                 summary += f"- {item_count} itens {rarity}\n"
-
-        if not server_data.get("stock_items"):
-             summary = "Nenhum item adicionado ao estoque."
-
-
-        await interaction.followup.send(summary, ephemeral=True)
-        await interaction.followup.send("Estoque atualizado com sucesso e valores salvos!", ephemeral=True)
+        except Exception as e:
+            print(f"Erro ao gerar estoque para {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Ocorreu um erro inesperado ao gerar o estoque.", ephemeral=True)
 
     @app_commands.command(name="inserir", description="Insere um item no estoque da loja")
     @app_commands.describe(
@@ -273,9 +263,13 @@ class AdminCog(commands.Cog):
             app_commands.Choice(name="Muito Raro", value="very rare")
         ]
     )
+    @app_commands.autocomplete(item=autocomplete_item)
     @app_commands.checks.has_permissions(administrator=True)
     async def inserir(self, interaction: discord.Interaction, raridade: str, item: str, quantidade: int, valor: int = None):
         """Insere um item no estoque da loja."""
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
         if quantidade <= 0:
              await interaction.response.send_message("A quantidade deve ser positiva.", ephemeral=True)
              return
@@ -283,201 +277,229 @@ class AdminCog(commands.Cog):
              await interaction.response.send_message("O valor não pode ser negativo.", ephemeral=True)
              return
 
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
-
-        if "stock_items" not in server_data:
-            server_data["stock_items"] = {}
-
-        if raridade not in server_data["stock_items"]:
-            server_data["stock_items"][raridade] = {
-                'Name': [],
-                'Value': [],
-                'Quantity': [],
-                'Text': []
-            }
-
-        stock = server_data["stock_items"][raridade]
+        int_server_id = interaction.guild_id
 
         try:
-            index = stock['Name'].index(item)
-            stock['Quantity'][index] += quantidade
-            if valor is not None:
-                stock['Value'][index] = str(valor)
-                update_item_price(server_id, item, str(valor))
-        except ValueError: # Item não existe, adiciona novo
-            stock['Name'].append(item)
-            stock['Quantity'].append(quantidade)
-            item_value = str(valor) if valor is not None else server_data.get("prices", {}).get(item, str(config.get("precos_padroes", {}).get("item_padrao", 100)))
-            stock['Value'].append(item_value)
-            if valor is not None:
-                 update_item_price(server_id, item, str(valor))
-            # TODO: Buscar descrição real do item se possível
-            stock['Text'].append("Descrição não disponível")
+            item_mestre = self.repo_itens.obter_por_nome(item)
+            if not item_mestre:
+                await interaction.response.send_message(f"❌ Item mestre '{item}' não encontrado.", ephemeral=True)
+                return
 
-        save_server_data(server_id, server_data)
-        await interaction.response.send_message(f"Item '{item}' (Quantidade: {quantidade}) inserido/atualizado no estoque com sucesso.", ephemeral=True)
+            item_estoque_existente = self.repo_estoque_loja.obter_por_servidor_e_item(int_server_id, item_mestre.id)
+
+            if item_estoque_existente:
+                item_estoque_existente.quantidade += quantidade
+                if valor is not None:
+                    item_estoque_existente.preco_especifico = valor
+                self.repo_estoque_loja.atualizar(item_estoque_existente)
+                preco_exibido = item_estoque_existente.preco_especifico if item_estoque_existente.preco_especifico is not None else item_mestre.valor
+                await interaction.response.send_message(f"✅ Quantidade do item '{item}' atualizada para {item_estoque_existente.quantidade}. Preço: {preco_exibido} moedas.", ephemeral=True)
+            else:
+                preco_final = valor if valor is not None else item_mestre.valor
+
+                novo_item_estoque = EstoqueLojaItemModel(
+                    servidor_id=int_server_id,
+                    item_id=item_mestre.id,
+                    quantidade=quantidade,
+                    preco_especifico=valor
+                )
+                self.repo_estoque_loja.adicionar(novo_item_estoque)
+                await interaction.response.send_message(f"✅ Item '{item}' adicionado ao estoque com quantidade {quantidade} e preço {preco_final} moedas.", ephemeral=True)
+
+        except Exception as e:
+            print(f"Erro inesperado ao inserir item '{item}' no estoque para {int_server_id}: {type(e).__name__} - {e}") # Log detalhado
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao inserir o item.", ephemeral=True)
 
     @app_commands.command(name="remover", description="Remove um item do estoque da loja")
     @app_commands.describe(
         item="Nome do item a ser removido",
         quantidade="Quantidade a ser removida (padrão: todos)"
     )
+    @app_commands.autocomplete(item=autocomplete_item)
     @app_commands.checks.has_permissions(administrator=True)
     async def remover(self, interaction: discord.Interaction, item: str, quantidade: int = None):
         """Remove um item do estoque da loja."""
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
         if quantidade is not None and quantidade <= 0:
              await interaction.response.send_message("A quantidade a remover deve ser positiva.", ephemeral=True)
              return
 
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
+        int_server_id = interaction.guild_id
 
-        item_found = False
-        rarity_found = None
-        index_found = None
+        try:
+            item_mestre = self.repo_itens.obter_por_nome(item)
+            if not item_mestre:
+                await interaction.response.send_message(f"❌ Item mestre '{item}' não encontrado.", ephemeral=True)
+                return
 
-        for rarity, stock in server_data.get("stock_items", {}).items():
-            try:
-                index = stock['Name'].index(item)
-                item_found = True
-                rarity_found = rarity
-                index_found = index
-                break
-            except ValueError:
-                continue
+            item_estoque = self.repo_estoque_loja.obter_por_servidor_e_item(int_server_id, item_mestre.id)
+            if not item_estoque:
+                await interaction.response.send_message(f"❌ Item '{item}' não encontrado no estoque deste servidor.", ephemeral=True)
+                return
 
-        if not item_found:
-            await interaction.response.send_message(f"Item '{item}' não encontrado no estoque.", ephemeral=True)
-            return
+            if quantidade is None or quantidade >= item_estoque.quantidade:
+                self.repo_estoque_loja.remover(item_estoque)
+                await interaction.response.send_message(f"✅ Item '{item}' removido completamente do estoque.", ephemeral=True)
+            else:
+                item_estoque.quantidade -= quantidade
+                self.repo_estoque_loja.atualizar(item_estoque)
+                await interaction.response.send_message(f"✅ Removido {quantidade} de '{item}'. Quantidade restante: {item_estoque.quantidade}", ephemeral=True)
 
-        stock_to_update = server_data["stock_items"][rarity_found]
-        current_quantity = stock_to_update['Quantity'][index_found]
+        except Exception as e:
+            print(f"Erro ao remover item '{item}' do estoque para {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao remover o item.", ephemeral=True)
 
-        if quantidade is None or quantidade >= current_quantity:
-            # Remover completamente
-            stock_to_update['Name'].pop(index_found)
-            stock_to_update['Value'].pop(index_found)
-            stock_to_update['Quantity'].pop(index_found)
-            stock_to_update['Text'].pop(index_found)
-            # Limpar raridade se vazia
-            if not stock_to_update['Name']:
-                 del server_data["stock_items"][rarity_found]
-            await interaction.response.send_message(f"Item '{item}' removido completamente do estoque.", ephemeral=True)
-        else:
-            # Remover quantidade parcial
-            stock_to_update['Quantity'][index_found] -= quantidade
-            await interaction.response.send_message(f"Removido {quantidade} de '{item}'. Quantidade restante: {stock_to_update['Quantity'][index_found]}", ephemeral=True)
-
-        save_server_data(server_id, server_data)
-
-    @app_commands.command(name="dinheiro", description="[Admin] Define a quantidade de dinheiro de um personagem")
+    @app_commands.command(name="dinheiro", description="[Admin] Define o dinheiro de um personagem específico de um usuário")
     @app_commands.describe(
+        usuario="O usuário dono do personagem",
         character="Nome do personagem",
         amount="Quantidade de dinheiro"
     )
+    @app_commands.autocomplete(character=autocomplete_character_for_user)
     @app_commands.checks.has_permissions(administrator=True)
-    async def dinheiro(self, interaction: discord.Interaction, character: str, amount: int):
+    async def dinheiro(self, interaction: discord.Interaction, usuario: Member, character: str, amount: int):
         """Define a quantidade de dinheiro de um personagem."""
-        if amount < 0:
-             await interaction.response.send_message("A quantidade de dinheiro não pode ser negativa.", ephemeral=True)
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
              return
+        if amount < 0:
+              await interaction.response.send_message("A quantidade de dinheiro não pode ser negativa.", ephemeral=True)
+              return
 
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
+        int_server_id = interaction.guild_id
 
-        character_found = False
-        for user_id_str, characters in server_data.get("characters", {}).items():
-            if character in characters:
-                characters[character]["dinheiro"] = amount
-                await interaction.response.send_message(f"Dinheiro de {character} definido como {amount} moedas.", ephemeral=True)
-                save_server_data(server_id, server_data)
-                character_found = True
-                break
+        try:
+            personagens_usuario = self.repo_personagens.listar_por_usuario(usuario.id, int_server_id)
+            personagem_encontrado = None
+            for p in personagens_usuario:
+                if p.nome.lower() == character.lower():
+                    personagem_encontrado = p
+                    break
 
-        if not character_found:
-            await interaction.response.send_message(f"Personagem '{character}' não encontrado.", ephemeral=True)
+            if personagem_encontrado:
+                personagem_encontrado.dinheiro = amount
+                self.repo_personagens.atualizar(personagem_encontrado)
+                await interaction.response.send_message(f"✅ Dinheiro de {personagem_encontrado.nome} (usuário: {usuario.display_name}) definido como {amount} moedas.", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ Personagem '{character}' não encontrado para o usuário {usuario.display_name}.", ephemeral=True)
+
+        except Exception as e:
+            print(f"Erro ao definir dinheiro para {character} (usuário {usuario.id}) no servidor {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao definir o dinheiro.", ephemeral=True)
 
 
-    @app_commands.command(name="saldo", description="[Admin] Adiciona ou remove dinheiro do saldo de um personagem")
+    @app_commands.command(name="saldo", description="[Admin] Adiciona/remove dinheiro do saldo de um personagem de um usuário")
     @app_commands.describe(
+        usuario="O usuário dono do personagem",
         character="Nome do personagem",
         amount="Quantidade de dinheiro (use números negativos para remover)"
     )
+    @app_commands.autocomplete(character=autocomplete_character_for_user)
     @app_commands.checks.has_permissions(administrator=True)
-    async def saldo(self, interaction: discord.Interaction, character: str, amount: int):
+    async def saldo(self, interaction: discord.Interaction, usuario: Member, character: str, amount: int):
         """Adiciona ou remove dinheiro do saldo de um personagem."""
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
+        int_server_id = interaction.guild_id
 
-        character_found = False
-        for user_id_str, characters in server_data.get("characters", {}).items():
-            if character in characters:
-                character_data = characters[character]
-                # Garantir que dinheiro existe e é int
-                if "dinheiro" not in character_data or not isinstance(character_data["dinheiro"], int):
-                     character_data["dinheiro"] = 0
-                character_data["dinheiro"] += amount
-                # Evitar saldo negativo? Depende da regra do jogo.
-                # character_data["dinheiro"] = max(0, character_data["dinheiro"])
+        try:
+            personagens_usuario = self.repo_personagens.listar_por_usuario(usuario.id, int_server_id)
+            personagem_encontrado = None
+            for p in personagens_usuario:
+                if p.nome.lower() == character.lower():
+                    personagem_encontrado = p
+                    break
 
-                novo_saldo = character_data['dinheiro']
+            if personagem_encontrado:
+                personagem_encontrado.dinheiro += amount
+                novo_saldo = personagem_encontrado.dinheiro
+                self.repo_personagens.atualizar(personagem_encontrado)
 
                 if amount > 0:
-                    await interaction.response.send_message(f"Adicionado {amount} moedas ao saldo de {character}. Novo saldo: {novo_saldo} moedas.", ephemeral=True)
+                    msg = f"✅ Adicionado {amount} moedas ao saldo de {personagem_encontrado.nome} (usuário: {usuario.display_name}). Novo saldo: {novo_saldo} moedas."
                 elif amount < 0:
-                    await interaction.response.send_message(f"Removido {abs(amount)} moedas do saldo de {character}. Novo saldo: {novo_saldo} moedas.", ephemeral=True)
+                    msg = f"✅ Removido {abs(amount)} moedas do saldo de {personagem_encontrado.nome} (usuário: {usuario.display_name}). Novo saldo: {novo_saldo} moedas."
                 else:
-                     await interaction.response.send_message(f"Nenhuma alteração no saldo de {character}. Saldo atual: {novo_saldo} moedas.", ephemeral=True)
+                     msg = f"ℹ️ Nenhuma alteração no saldo de {personagem_encontrado.nome} (usuário: {usuario.display_name}). Saldo atual: {novo_saldo} moedas."
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ Personagem '{character}' não encontrado para o usuário {usuario.display_name}.", ephemeral=True)
 
-
-                save_server_data(server_id, server_data)
-                character_found = True
-                break
-
-        if not character_found:
-            await interaction.response.send_message(f"Personagem '{character}' não encontrado.", ephemeral=True)
+        except Exception as e:
+            print(f"Erro ao alterar saldo para {character} (usuário {usuario.id}) no servidor {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao alterar o saldo.", ephemeral=True)
 
     @app_commands.command(name="limpar_estoque", description="[Admin] Limpa o estoque atual da loja")
     @app_commands.checks.has_permissions(administrator=True)
     async def limpar_estoque(self, interaction: discord.Interaction):
         """Limpa o estoque atual da loja."""
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
-        server_data["stock_items"] = {}
-        save_server_data(server_id, server_data)
-        await interaction.response.send_message("O estoque foi limpo com sucesso.", ephemeral=True)
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
+        int_server_id = interaction.guild_id
+        try:
+            self.repo_estoque_loja.limpar_estoque_servidor(int_server_id)
+            await interaction.response.send_message("✅ O estoque da loja foi limpo com sucesso.", ephemeral=True)
+        except Exception as e:
+            print(f"Erro ao limpar estoque para {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao limpar o estoque.", ephemeral=True)
 
     @app_commands.command(name="backup", description="[Admin] Mostra/Envia um backup dos dados do servidor")
     @app_commands.checks.has_permissions(administrator=True)
     async def backup(self, interaction: discord.Interaction):
         """Mostra um backup de todos os dados do servidor ou envia como arquivo."""
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
+        int_server_id = interaction.guild_id
+
+        await interaction.response.defer(ephemeral=True)
 
         try:
-            backup_data = json.dumps(server_data, indent=2, ensure_ascii=False) # ensure_ascii=False para caracteres especiais
+            configuracoes = self.repo_config_servidor.listar_por_servidor_como_dict(int_server_id)
+            estoque_db = self.repo_estoque_loja.listar_por_servidor(int_server_id)
+            estoque_formatado = [
+                {"item_id": item.item_id, "quantidade": item.quantidade, "preco": item.preco_especifico}
+                for item in estoque_db
+            ]
+            personagens_servidor = self.repo_personagens.listar_por_servidor_para_backup(int_server_id)
+
+            backup_data_dict = {
+                "configuracoes": configuracoes,
+                "estoque_loja": estoque_formatado,
+                "personagens": personagens_servidor,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
+            backup_json_str = json.dumps(backup_data_dict, indent=2, ensure_ascii=False)
+
+            if len(backup_json_str) <= 1900:
+                await interaction.followup.send(f"```json\n{backup_json_str}\n```", ephemeral=True)
+            else:
+                timestamp_file = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+                backup_filename = f"backup_{int_server_id}_{timestamp_file}.json"
+                temp_dir = "temp_backups"
+                os.makedirs(temp_dir, exist_ok=True)
+                backup_filepath = os.path.join(temp_dir, backup_filename)
+
+                with open(backup_filepath, "w", encoding='utf-8') as f:
+                    f.write(backup_json_str)
+
+                await interaction.followup.send("O backup é muito grande para ser enviado como mensagem. Enviando como arquivo...", file=discord.File(backup_filepath), ephemeral=True)
+                os.remove(backup_filepath)
+
         except Exception as e:
-             await interaction.response.send_message(f"Erro ao serializar dados para backup: {e}", ephemeral=True)
-             return
-
-        if len(backup_data) <= 1900: # Limite do Discord é 2000, dar margem
-            await interaction.response.send_message(f"```json\n{backup_data}\n```", ephemeral=True)
-        else:
-            try:
-                # Salvar em arquivo temporário
-                timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-                backup_filename = f"backup_{server_id}_{timestamp}.json"
-                with open(backup_filename, "w", encoding='utf-8') as f:
-                    f.write(backup_data)
-
-                # Enviar o arquivo
-                await interaction.response.send_message("O backup é muito grande para ser enviado como mensagem. Enviando como arquivo...", file=discord.File(backup_filename), ephemeral=True)
-
-                # Limpar o arquivo após envio
-                os.remove(backup_filename)
-            except Exception as e:
-                await interaction.followup.send(f"Erro ao gerar ou enviar arquivo de backup: {e}", ephemeral=True) # Usar followup se a resposta inicial já foi enviada
+            print(f"Erro ao gerar backup para servidor {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Ocorreu um erro inesperado ao gerar o backup.", ephemeral=True)
 
 
     @app_commands.command(name="mensagens", description="[Admin] Adiciona uma mensagem para trabalho ou crime")
@@ -494,17 +516,23 @@ class AdminCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def mensagens(self, interaction: discord.Interaction, tipo: str, mensagem: str):
         """Adiciona uma mensagem personalizada para trabalho ou crime."""
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
+        int_server_id = interaction.guild_id
+        chave_config = f"mensagens_{tipo}"
 
-        if "messages" not in server_data:
-            server_data["messages"] = {"trabalho": [], "crime": []}
-        if tipo not in server_data["messages"]:
-             server_data["messages"][tipo] = []
-
-        server_data["messages"][tipo].append(mensagem)
-        save_server_data(server_id, server_data)
-        await interaction.response.send_message(f"Mensagem adicionada ao tipo {tipo} com sucesso.", ephemeral=True)
+        try:
+            lista_mensagens = self.repo_config_servidor.obter_valor(int_server_id, chave_config, default=[])
+            if not isinstance(lista_mensagens, list):
+                lista_mensagens = []
+            lista_mensagens.append(mensagem)
+            self.repo_config_servidor.adicionar_ou_atualizar(int_server_id, chave_config, lista_mensagens)
+            await interaction.response.send_message(f"✅ Mensagem adicionada à lista '{tipo}'.", ephemeral=True)
+        except Exception as e:
+            print(f"Erro ao adicionar mensagem tipo '{tipo}' para servidor {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao adicionar a mensagem.", ephemeral=True)
 
     @app_commands.command(name="tiers", description="[Admin] Define faixas de níveis para diferentes tiers")
     @app_commands.describe(
@@ -516,59 +544,129 @@ class AdminCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def tiers(self, interaction: discord.Interaction, tier: str, nivel_min: int, nivel_max: int, recompensa: int):
         """Define faixas de níveis e recompensas para tiers."""
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
         if nivel_min <= 0 or nivel_max <= 0 or nivel_min > nivel_max:
-             await interaction.response.send_message("Erro: Níveis mínimo e máximo devem ser positivos e mínimo <= máximo.", ephemeral=True)
-             return
+              await interaction.response.send_message("Erro: Níveis mínimo e máximo devem ser positivos e mínimo <= máximo.", ephemeral=True)
+              return
         if recompensa < 0:
-             await interaction.response.send_message("Erro: Recompensa não pode ser negativa.", ephemeral=True)
-             return
+              await interaction.response.send_message("Erro: Recompensa não pode ser negativa.", ephemeral=True)
+              return
 
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
+        int_server_id = interaction.guild_id
+        chave_config = "tiers_config"
 
-        if "tiers" not in server_data:
-            server_data["tiers"] = {}
-
-        # TODO: Validar sobreposição de tiers?
-
-        server_data["tiers"][tier] = {
-            "nivel_min": nivel_min,
-            "nivel_max": nivel_max,
-            "recompensa": recompensa
-        }
-
-        save_server_data(server_id, server_data)
-        await interaction.response.send_message(f"Tier '{tier}' definido para níveis {nivel_min}-{nivel_max} com recompensa de {recompensa} moedas.", ephemeral=True)
+        try:
+            tiers_atuais = self.repo_config_servidor.obter_valor(int_server_id, chave_config, default={})
+            if not isinstance(tiers_atuais, dict):
+                tiers_atuais = {}
+            tiers_atuais[tier] = {
+                "nivel_min": nivel_min,
+                "nivel_max": nivel_max,
+                "recompensa": recompensa
+            }
+            self.repo_config_servidor.adicionar_ou_atualizar(int_server_id, chave_config, tiers_atuais)
+            await interaction.response.send_message(f"✅ Tier '{tier}' definido/atualizado para níveis {nivel_min}-{nivel_max} com recompensa de {recompensa} moedas.", ephemeral=True)
+        except Exception as e:
+            print(f"Erro ao definir tier '{tier}' para servidor {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao definir o tier.", ephemeral=True)
 
     @app_commands.command(name="probabilidade_crime", description="[Admin] Define a probabilidade de sucesso para o comando /crime")
     @app_commands.describe(probabilidade="Probabilidade de sucesso (0 a 100)")
     @app_commands.checks.has_permissions(administrator=True)
     async def probabilidade_crime(self, interaction: discord.Interaction, probabilidade: int):
         """Define a probabilidade de sucesso para o comando /crime."""
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
         if not (0 <= probabilidade <= 100):
             await interaction.response.send_message("Por favor, insira um valor entre 0 e 100.", ephemeral=True)
             return
 
-        server_id = str(interaction.guild_id)
-        server_data = load_server_data(server_id)
+        int_server_id = interaction.guild_id
+        chave_config = "probabilidade_crime"
+        try:
+            self.repo_config_servidor.adicionar_ou_atualizar(int_server_id, chave_config, probabilidade)
+            await interaction.response.send_message(f"✅ Probabilidade de sucesso no crime definida para {probabilidade}%.", ephemeral=True)
+        except Exception as e:
+            print(f"Erro ao definir probabilidade_crime para servidor {int_server_id}: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao definir a probabilidade.", ephemeral=True)
 
-        server_data["probabilidade_crime"] = probabilidade
-        save_server_data(server_id, server_data)
-        await interaction.response.send_message(f"Probabilidade de sucesso no crime definida para {probabilidade}%.", ephemeral=True)
+    @app_commands.command(name="rip", description="[Admin] Elimina definitivamente um personagem")
+    @app_commands.describe(
+        usuario="Usuário dono do personagem",
+        character="Nome do personagem a ser eliminado"
+    )
+    @app_commands.autocomplete(character=autocomplete_character_for_user)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def rip(self, interaction: discord.Interaction, usuario: Member, character: str):
+        """Elimina definitivamente um personagem de um usuário."""
+        if not interaction.guild_id:
+             await interaction.response.send_message("Este comando só pode ser usado em um servidor.", ephemeral=True)
+             return
+        int_server_id = interaction.guild_id
+        target_user_id = usuario.id
 
-    # Tratamento de erro específico para comandos de admin neste Cog
-    # @AdminCog.error # Decorador de erro para o Cog
-    # async def on_admin_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-    #      if isinstance(error, app_commands.MissingPermissions):
-    #           await interaction.response.send_message("🚫 Você não tem permissão de administrador para usar este comando.", ephemeral=True)
-    #      else:
-    #           # Logar o erro para depuração
-    #           print(f"Erro inesperado no AdminCog: {error}")
-    #           await interaction.response.send_message("❌ Ocorreu um erro inesperado ao executar este comando.", ephemeral=True)
+        try:
+            personagens_usuario = self.repo_personagens.listar_por_usuario(target_user_id, int_server_id)
+            personagem_a_remover_id: int | None = None
+            for p in personagens_usuario:
+                if p.nome.lower() == character.lower():
+                    personagem_a_remover_id = p.id
+                    break
+
+            if personagem_a_remover_id is None:
+                await interaction.response.send_message(f"Personagem '{character}' não encontrado para o usuário {usuario.display_name}.", ephemeral=True)
+                return
+
+            view = discord.ui.View(timeout=30.0)
+            confirm_button = discord.ui.Button(label="Confirmar Eliminação", style=discord.ButtonStyle.danger, custom_id=f"confirm_rip_{interaction.id}")
+            cancel_button = discord.ui.Button(label="Cancelar", style=discord.ButtonStyle.secondary, custom_id=f"cancel_rip_{interaction.id}")
+
+            async def confirm_callback(interaction_confirm: discord.Interaction):
+                if interaction_confirm.user.id != interaction.user.id:
+                     await interaction_confirm.response.send_message("Apenas o autor do comando pode confirmar.", ephemeral=True)
+                     return
+                try:
+                    self.repo_personagens.remover(personagem_a_remover_id)
+                    # TODO: Remover itens do inventário associados?
+                    await interaction_confirm.response.edit_message(content=f"Personagem **{character}** de {usuario.display_name} foi eliminado com sucesso.", view=None)
+                except Exception as e_rip:
+                    print(f"Erro ao remover personagem {personagem_a_remover_id} no callback: {e_rip}")
+                    traceback.print_exc()
+                    await interaction_confirm.response.edit_message(content=f"Erro ao tentar eliminar o personagem **{character}**.", view=None)
+                view.stop()
+
+            async def cancel_callback(interaction_cancel: discord.Interaction):
+                 if interaction_cancel.user.id != interaction.user.id:
+                     await interaction_cancel.response.send_message("Apenas o autor do comando pode cancelar.", ephemeral=True)
+                     return
+                 await interaction_cancel.response.edit_message(content="Eliminação cancelada.", view=None)
+                 view.stop()
+
+            confirm_button.callback = confirm_callback
+            cancel_button.callback = cancel_callback
+            view.add_item(confirm_button)
+            view.add_item(cancel_button)
+
+            await interaction.response.send_message(f"Tem certeza que deseja eliminar o personagem **{character}** de {usuario.display_name}? Esta ação é **irreversível**.", view=view, ephemeral=True)
+
+            timeout = await view.wait()
+            if timeout:
+                 try: await interaction.edit_original_response(content="Tempo de confirmação esgotado. O personagem não foi eliminado.", view=None)
+                 except discord.NotFound: pass
+                 except discord.HTTPException as e_http: print(f"Erro ao editar msg RIP timeout: {e_http}")
+
+        except Exception as e:
+            print(f"Erro no comando /rip para {character} (usuário {usuario.id}): {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao tentar eliminar o personagem.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
     """Adiciona o Cog ao bot."""
-    # TODO: Injetar dependências (casos de uso, repositórios) se necessário
-    # Exemplo: await bot.add_cog(AdminCog(bot, caso_uso_admin1, repo_config))
-    await bot.add_cog(AdminCog(bot))
+    # A injeção é feita pelo carregador_cogs.py
+    pass

@@ -17,12 +17,12 @@ class CometerCrime:
             raise ValueError(f"Personagem com ID {personagem_id} não encontrado.")
 
         intervalo_crime = self.configuracao.obter("limites").get("intervalo_crime")
-        ultimo_tempo_crime = personagem.ultimo_tempo_crime
+        ultimo_crime = personagem.ultimo_crime
         if tempo_atual is None: # Se tempo_atual não foi passado, usa datetime.now()
             tempo_atual = datetime.datetime.now()
 
-        if not verificar_cooldown(ultimo_tempo_crime, intervalo_crime, tempo_atual): # Passar tempo_atual posicionalmente
-            delta = tempo_atual - ultimo_tempo_crime # Calcular delta aqui
+        if not verificar_cooldown(ultimo_crime, intervalo_crime, tempo_atual): # Passar tempo_atual posicionalmente
+            delta = tempo_atual - ultimo_crime # Calcular delta aqui
             tempo_restante = intervalo_crime - delta.total_seconds()
             tempo_restante_formatado = datetime.timedelta(seconds=tempo_restante)
             raise ValueError(f"Ação de crime está em cooldown. Tempo restante: {tempo_restante_formatado}.") # Melhorar mensagem de erro
@@ -38,7 +38,7 @@ class CometerCrime:
         )
 
         personagem.dinheiro += resultado_financeiro
-        personagem.ultimo_tempo_crime = tempo_atual
+        personagem.ultimo_crime = tempo_atual
         self.repositorio_personagens.atualizar(personagem) # Assuming 'atualizar' method exists
 
         mensagens_crime = self.configuracao.obter("messages").get("crime") or ["Você tentou cometer um crime..."]

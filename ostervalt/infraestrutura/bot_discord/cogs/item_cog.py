@@ -2,10 +2,14 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+from typing import List
 
 from ostervalt.nucleo.casos_de_uso.obter_item import ObterItem
 from ostervalt.nucleo.casos_de_uso.listar_itens import ListarItens
-from ostervalt.nucleo.casos_de_uso.dtos import ItemDTO, ListaItensDTO, ComandoDTO
+# Removido ListaItensDTO, UC retorna List[Item]
+# Removido ComandoDTO, não usado aqui
+from ostervalt.nucleo.casos_de_uso.dtos import ItemDTO
+from ostervalt.nucleo.entidades.item import Item # Importar entidade
 
 class ItemCog(commands.Cog):
     """Cog para comandos relacionados a itens (informações, loja)."""
@@ -19,7 +23,7 @@ class ItemCog(commands.Cog):
         self.bot = bot
         self.obter_item_uc = obter_item_uc
         self.listar_itens_uc = listar_itens_uc
-        print("Cog Item carregado.") # Log para depuração
+        print("Cog Item carregado.")
 
     # --- Comandos Slash ---
 
@@ -29,52 +33,58 @@ class ItemCog(commands.Cog):
         """Exibe detalhes sobre um item específico."""
         await interaction.response.defer(ephemeral=True)
         try:
-            comando_dto = ComandoDTO(
-                discord_id=interaction.user.id, # ID do usuário que pediu
-                parametros={'item_id': item_id}
-            )
-            resultado_dto: ItemDTO = self.obter_item_uc.executar(comando_dto)
+            # O caso de uso ObterItem espera apenas item_id
+            resultado_item: Item | None = self.obter_item_uc.executar(item_id=item_id) # UC retorna Entidade ou None
 
+            if resultado_item is None:
+                 await interaction.followup.send(f"❌ Não foi possível encontrar o item com ID {item_id}.", ephemeral=True)
+                 return
+
+            # Criar embed a partir da entidade Item
             embed = discord.Embed(
-                title=f"ℹ️ Informações do Item: {resultado_dto.nome}",
-                description=f"*{resultado_dto.descricao}*",
+                title=f"ℹ️ Informações do Item: {resultado_item.nome}",
+                description=f"*{resultado_item.descricao}*",
                 color=discord.Color.light_grey()
             )
-            embed.add_field(name="ID", value=resultado_dto.id, inline=True)
-            embed.add_field(name="Tipo", value=resultado_dto.tipo.capitalize(), inline=True)
-            embed.add_field(name="Preço", value=f"🪙 {resultado_dto.preco}", inline=True)
-            # Adicionar mais detalhes se disponíveis no DTO (e.g., atributos, raridade)
-            # embed.add_field(name="Atributos", value=str(resultado_dto.atributos), inline=False)
+            embed.add_field(name="ID", value=resultado_item.id, inline=True)
+            embed.add_field(name="Raridade", value=resultado_item.raridade.capitalize(), inline=True)
+            embed.add_field(name="Valor Padrão", value=f"🪙 {resultado_item.valor}", inline=True)
 
             await interaction.followup.send(embed=embed, ephemeral=True)
 
+        except ValueError as e: # Captura erro se item não for encontrado pelo UC
+            print(f"Erro ao obter informações do item {item_id}: {e}")
+            await interaction.followup.send(f"❌ Não foi possível encontrar o item com ID {item_id}.", ephemeral=True)
         except Exception as e:
-            # TODO: Tratar exceção ItemNaoEncontrado
-            print(f"Erro ao obter informações do item: {e}")
-            await interaction.followup.send(f"❌ Não foi possível encontrar o item com ID {item_id}. Erro: {e}", ephemeral=True)
+            print(f"Erro inesperado ao obter informações do item: {e}")
+            await interaction.followup.send(f"❌ Ocorreu um erro inesperado ao buscar informações do item.", ephemeral=True)
+
 
     @app_commands.command(name="loja", description="Mostra os itens disponíveis para compra.")
     async def ver_loja(self, interaction: discord.Interaction):
         """Exibe os itens disponíveis na loja."""
+        # TODO: Idealmente, a loja deveria mostrar itens do EstoqueLoja, não todos os itens mestres.
+        # Isso requer um novo caso de uso ou modificação do ListarItens/AdminCog.
+        # Por ora, listamos todos os itens mestres como fallback.
         await interaction.response.defer(ephemeral=True)
         try:
-            # Este caso de uso pode precisar de filtros no futuro (e.g., itens compráveis)
-            comando_dto = ComandoDTO(discord_id=interaction.user.id)
-            resultado_dto: ListaItensDTO = self.listar_itens_uc.executar(comando_dto)
+            # ListarItens.executar retorna List[Item]
+            itens_disponiveis: List[Item] = self.listar_itens_uc.executar() # Chamada corrigida
 
-            if not resultado_dto.itens:
-                await interaction.followup.send("🛒 A loja está vazia no momento.", ephemeral=True)
+            if not itens_disponiveis:
+                # Mensagem ajustada - pode não haver itens cadastrados
+                await interaction.followup.send("🛒 Nenhum item encontrado no catálogo mestre.", ephemeral=True)
                 return
 
             embed = discord.Embed(
-                title="🛒 Loja de Ostervalt",
-                description="Itens disponíveis para compra:",
+                title="<0xF0><0x9F><0xAA><0x9A> Catálogo Mestre de Itens", # Título ajustado
+                description="Itens existentes no mundo (preços podem variar na loja):",
                 color=discord.Color.dark_blue()
             )
-            for item in resultado_dto.itens:
+            for item in itens_disponiveis:
                  embed.add_field(
                     name=f"{item.nome} (ID: {item.id})",
-                    value=f"Valor: 🪙 {item.valor}\n*'{item.descricao}'*", # Corrigido para item.valor
+                    value=f"Valor Padrão: 🪙 {item.valor}\n*'{item.descricao}'*", # Usa dados da entidade Item
                     inline=False
                 )
             # TODO: Adicionar paginação se a lista for muito grande
@@ -83,19 +93,10 @@ class ItemCog(commands.Cog):
 
         except Exception as e:
             print(f"Erro ao listar itens da loja: {e}")
-            await interaction.followup.send(f"❌ Ocorreu um erro ao buscar os itens da loja: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Ocorreu um erro ao buscar os itens.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
     """Adiciona o Cog ao bot."""
-    # TODO: Instanciar e injetar os casos de uso aqui
-    # Exemplo (precisa ser substituído pela injeção real):
-    # from ostervalt.infraestrutura.persistencia.repositorio_itens import RepositorioItensSQLAlchemy
-    # from ostervalt.infraestrutura.configuracao.db import SessionLocal
-    # repo = RepositorioItensSQLAlchemy(SessionLocal)
-    # obter_uc = ObterItem(repo)
-    # listar_uc = ListarItens(repo)
-    # await bot.add_cog(ItemCog(bot, obter_uc, listar_uc))
-    print("Função setup do ItemCog chamada, mas a injeção de dependência real precisa ser configurada.")
-    # Por enquanto, não adicionaremos o Cog até a injeção estar pronta no ostervalt.py
+    # A injeção é feita pelo carregador_cogs.py
     pass

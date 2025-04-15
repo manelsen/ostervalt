@@ -5,6 +5,8 @@ from ostervalt.infraestrutura.configuracao.db import get_session
 from ostervalt.infraestrutura.persistencia.repositorio_personagens import RepositorioPersonagensSQLAlchemy
 from ostervalt.infraestrutura.persistencia.repositorio_itens import RepositorioItensSQLAlchemy
 from ostervalt.infraestrutura.persistencia.repositorio_inventario import RepositorioInventarioSQLAlchemy
+from ostervalt.infraestrutura.persistencia.repositorio_configuracao_servidor import RepositorioConfiguracaoServidor # Adicionado
+from ostervalt.infraestrutura.persistencia.repositorio_estoque_loja import RepositorioEstoqueLoja # Adicionado
 
 # Importar Casos de Uso
 from ostervalt.nucleo.casos_de_uso.criar_personagem import CriarPersonagem
@@ -12,11 +14,13 @@ from ostervalt.nucleo.casos_de_uso.obter_personagem import ObterPersonagem
 from ostervalt.nucleo.casos_de_uso.listar_personagens import ListarPersonagens
 from ostervalt.nucleo.casos_de_uso.realizar_trabalho import RealizarTrabalho
 from ostervalt.nucleo.casos_de_uso.cometer_crime import CometerCrime
+from ostervalt.infraestrutura.configuracao.configuracao import Configuracao
 from ostervalt.nucleo.casos_de_uso.listar_inventario import ListarInventario
 from ostervalt.nucleo.casos_de_uso.adicionar_item_inventario import AdicionarItemInventario
 from ostervalt.nucleo.casos_de_uso.remover_item_inventario import RemoverItemInventario
 from ostervalt.nucleo.casos_de_uso.obter_item import ObterItem
 from ostervalt.nucleo.casos_de_uso.listar_itens import ListarItens
+from ostervalt.infraestrutura.bot_discord.cogs.util_cog import UtilCog
 
 class Container:
     """Container simples para injeção de dependência."""
@@ -54,20 +58,24 @@ def configurar_container() -> Container:
     repo_personagens = RepositorioPersonagensSQLAlchemy(db_session)
     repo_itens = RepositorioItensSQLAlchemy(db_session)
     repo_inventario = RepositorioInventarioSQLAlchemy(db_session)
+    repo_config_servidor = RepositorioConfiguracaoServidor(db_session) # Adicionado
+    repo_estoque_loja = RepositorioEstoqueLoja(db_session) # Adicionado
 
     container.registrar('repo_personagens', repo_personagens)
     container.registrar('repo_itens', repo_itens)
     container.registrar('repo_inventario', repo_inventario)
+    container.registrar('repo_config_servidor', repo_config_servidor) # Adicionado
+    container.registrar('repo_estoque_loja', repo_estoque_loja) # Adicionado
 
     # --- Casos de Uso ---
     container.registrar('criar_personagem_uc', CriarPersonagem(repo_personagens))
     container.registrar('obter_personagem_uc', ObterPersonagem(repo_personagens))
     container.registrar('listar_personagens_uc', ListarPersonagens(repo_personagens))
     container.registrar('realizar_trabalho_uc', RealizarTrabalho(repo_personagens)) # Pode precisar de outros repos no futuro
-    container.registrar('cometer_crime_uc', CometerCrime(repo_personagens)) # Pode precisar de outros repos no futuro
-    container.registrar('listar_inventario_uc', ListarInventario(repo_inventario, repo_personagens))
-    container.registrar('adicionar_item_inventario_uc', AdicionarItemInventario(repo_inventario, repo_itens, repo_personagens)) # Ajustado para incluir repo_personagens
-    container.registrar('remover_item_inventario_uc', RemoverItemInventario(repo_inventario, repo_personagens)) # Ajustado para incluir repo_personagens
+    container.registrar('cometer_crime_uc', CometerCrime(repo_personagens, Configuracao('config.yaml'))) # Pode precisar de outros repos no futuro
+    container.registrar('listar_inventario_uc', ListarInventario(repo_inventario))
+    container.registrar('adicionar_item_inventario_uc', AdicionarItemInventario(repo_inventario, repo_itens)) # Ajustado para incluir repo_personagens
+    container.registrar('remover_item_inventario_uc', RemoverItemInventario(repo_inventario)) # Ajustado para incluir repo_personagens
     container.registrar('obter_item_uc', ObterItem(repo_itens))
     container.registrar('listar_itens_uc', ListarItens(repo_itens))
 

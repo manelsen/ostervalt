@@ -1,3 +1,4 @@
+
 import pytest
 from unittest.mock import MagicMock, patch
 import datetime
@@ -94,7 +95,8 @@ def test_cometer_crime_cooldown_nao_terminou():
         1,       # id
         5,       # nivel
         100,     # dinheiro
-        datetime.datetime.now() - datetime.timedelta(minutes=30), # ultimo_tempo_crime
+        ultimo_trabalho=None,
+        ultimo_crime=datetime.datetime.now() - datetime.timedelta(minutes=30) # ultimo_crime
     )
     repo_mock.obter_por_id.return_value = personagem
     # Configurar o mock para retornar o dicionário correto para cada chave esperada
@@ -113,7 +115,7 @@ def test_cometer_crime_cooldown_nao_terminou():
     # Definir um tempo atual fixo para o teste
     tempo_atual_teste = datetime.datetime(2025, 1, 1, 12, 0, 0)
     # Garantir que ultimo_tempo_crime seja relativo a tempo_atual_teste
-    personagem.ultimo_tempo_crime = tempo_atual_teste - datetime.timedelta(minutes=30)
+    personagem.ultimo_crime = tempo_atual_teste - datetime.timedelta(minutes=30)
     with pytest.raises(ValueError, match="Ação de crime está em cooldown"):
         caso_uso.executar(1, tempo_atual=tempo_atual_teste) # Passar tempo_atual fixo
 
