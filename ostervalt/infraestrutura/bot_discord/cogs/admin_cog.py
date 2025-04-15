@@ -8,16 +8,16 @@ import datetime
 import traceback # Para log de erro
 from discord.ext import commands
 from discord import app_commands, Role, Member
-from typing import List # Adicionado para autocomplete
+from typing import List, Optional
 
 # Importar tipos dos repositórios e entidades
 from ostervalt.infraestrutura.persistencia.repositorio_configuracao_servidor import RepositorioConfiguracaoServidor
 from ostervalt.infraestrutura.persistencia.repositorio_estoque_loja import RepositorioEstoqueLoja
 from ostervalt.infraestrutura.persistencia.repositorio_personagens import RepositorioPersonagensSQLAlchemy
 from ostervalt.infraestrutura.persistencia.repositorio_itens import RepositorioItensSQLAlchemy
-from ostervalt.infraestrutura.persistencia.models import EstoqueLojaItemModel, ItemModel
-from ostervalt.nucleo.entidades.item import Item # Adicionado para autocomplete
-from ostervalt.nucleo.entidades.personagem import Personagem # Adicionado para autocomplete
+from ostervalt.infraestrutura.persistencia.models import EstoqueLojaItemModel, ItemModel, StatusPersonagem
+from ostervalt.nucleo.entidades.item import Item
+from ostervalt.nucleo.entidades.personagem import Personagem
 
 
 class AdminCog(commands.Cog):
@@ -41,17 +41,25 @@ class AdminCog(commands.Cog):
     async def autocomplete_character_for_user(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         """Autocompleta com personagens de um usuário específico."""
         if not interaction.guild_id: return []
-        target_user = interaction.namespace.usuario # Nome da opção é 'usuario' nos comandos /dinheiro, /saldo, /rip
-        if not isinstance(target_user, Member):
-             print("Autocomplete Admin: Não foi possível determinar o usuário alvo.")
-             return []
 
-        target_user_id = target_user.id
+        target_user_id: Optional[int] = None
+        # Tenta obter o ID do usuário diretamente do namespace
+        if interaction.namespace and hasattr(interaction.namespace, 'usuario') and hasattr(interaction.namespace.usuario, 'id'):
+            try:
+                target_user_id = int(interaction.namespace.usuario.id)
+            except (ValueError, TypeError):
+                print("Autocomplete Admin: Falha ao converter interaction.namespace.usuario.id para int.")
+                target_user_id = None
+
+        if target_user_id is None:
+            print("Autocomplete Admin: Não foi possível determinar o ID do usuário alvo.")
+            return [] # Retorna vazio se não conseguir o ID
+
         server_id = interaction.guild_id
         try:
             personagens: List[Personagem] = self.repo_personagens.listar_por_usuario(target_user_id, server_id)
             choices = [
-                app_commands.Choice(name=f"{p.nome}{' (Aposentado)' if p.status == StatusPersonagem.APOSENTADO else ''}", value=p.nome)
+                 app_commands.Choice(name=f"{p.nome}{' (Aposentado)' if p.status == StatusPersonagem.APOSENTADO else ''}", value=p.nome)
                 for p in personagens
                 if current.lower() in p.nome.lower()
             ]
@@ -307,7 +315,7 @@ class AdminCog(commands.Cog):
                 await interaction.response.send_message(f"✅ Item '{item}' adicionado ao estoque com quantidade {quantidade} e preço {preco_final} moedas.", ephemeral=True)
 
         except Exception as e:
-            print(f"Erro inesperado ao inserir item '{item}' no estoque para {int_server_id}: {type(e).__name__} - {e}") # Log detalhado
+            print(f"Erro inesperado ao inserir item '{item}' no estoque para {int_server_id}: {type(e).__name__} - {e}")
             traceback.print_exc()
             await interaction.response.send_message(f"❌ Ocorreu um erro inesperado ao inserir o item.", ephemeral=True)
 
@@ -597,7 +605,7 @@ class AdminCog(commands.Cog):
 
     @app_commands.command(name="rip", description="[Admin] Elimina definitivamente um personagem")
     @app_commands.describe(
-        usuario="Usuário dono do personagem",
+        usuario="O usuário dono do personagem",
         character="Nome do personagem a ser eliminado"
     )
     @app_commands.autocomplete(character=autocomplete_character_for_user)

@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands, Member
 from typing import List
+import traceback
 
 # Importar casos de uso e DTOs necessários
 from ostervalt.nucleo.casos_de_uso.criar_personagem import CriarPersonagem
@@ -12,7 +13,6 @@ from ostervalt.infraestrutura.persistencia.models import StatusPersonagem
 # from ostervalt.infraestrutura.bot_discord.autocomplete import autocomplete_character # Removido
 from ostervalt.infraestrutura.persistencia.repositorio_personagens import RepositorioPersonagensSQLAlchemy
 from ostervalt.nucleo.entidades.personagem import Personagem
-import traceback # Para log de erro
 
 class PersonagemCog(commands.Cog):
     def __init__(
@@ -59,13 +59,12 @@ class PersonagemCog(commands.Cog):
             choices = [
                 app_commands.Choice(name=p.nome, value=p.nome)
                 for p in personagens
-                if p.status == StatusPersonagem.ATIVO and current.lower() in p.nome.lower()
+                if p.status == StatusPersonagem.ATIVO and current.lower() in p.nome.lower() # Filtro ATIVO
             ]
             return choices[:25]
         except Exception as e:
             print(f"Erro no autocomplete_active_character (PersonagemCog): {e}")
             return []
-
 
     # --- Comandos Slash ---
 
@@ -111,8 +110,8 @@ class PersonagemCog(commands.Cog):
             await interaction.followup.send(f"❌ Ocorreu um erro inesperado ao criar o personagem.", ephemeral=True)
 
     @app_commands.command(name="perfil", description="Exibe o perfil de um personagem.")
-    @app_commands.describe(character="O nome do personagem que você quer ver") # Alterado de ID para nome
-    @app_commands.autocomplete(character=autocomplete_character) # Adicionado autocomplete
+    @app_commands.describe(character="O nome do personagem que você quer ver") # Alterado para nome
+    @app_commands.autocomplete(character=autocomplete_character) # Usa autocomplete geral
     async def ver_perfil(self, interaction: discord.Interaction, character: str): # Alterado para receber nome
         """Exibe o perfil de um personagem."""
         await interaction.response.defer(ephemeral=True)
@@ -152,8 +151,7 @@ class PersonagemCog(commands.Cog):
             embed.add_field(name="Nível", value=resultado_dto.nivel, inline=True)
             embed.add_field(name="Dinheiro", value=f"🪙 {resultado_dto.dinheiro}", inline=True)
             status_str = f" ({target_personagem.status.value.capitalize()})" if target_personagem.status else ""
-            embed.add_field(name="Status", value=status_str if status_str else "Ativo", inline=True) # Mostrar Status
-            # Adicionar outros campos se necessário
+            embed.add_field(name="Status", value=status_str if status_str else "Ativo", inline=True)
             if resultado_dto.criado_em:
                 embed.set_footer(text=f"Criado em: {resultado_dto.criado_em.strftime('%d/%m/%Y %H:%M')}")
 
@@ -187,7 +185,6 @@ class PersonagemCog(commands.Cog):
                 title=f"🎭 Seus Personagens ({len(personagens)})",
                 color=discord.Color.purple()
             )
-            # Ordenar para mostrar ativos primeiro (opcional)
             personagens.sort(key=lambda p: p.status == StatusPersonagem.APOSENTADO if p.status else False)
             for p in personagens:
                 status_str = f" ({p.status.value.capitalize()})" if p.status else ""
@@ -202,9 +199,9 @@ class PersonagemCog(commands.Cog):
             traceback.print_exc()
             await interaction.followup.send(f"❌ Ocorreu um erro ao listar seus personagens.", ephemeral=True)
 
-    @app_commands.command(name="inss", description="Aposenta um personagem, alterando seu status")
-    @app_commands.describe(character="Nome do personagem a aposentar")
-    @app_commands.autocomplete(character=autocomplete_active_character) # Alterado para autocomplete de ativos
+    @app_commands.command(name="inss", description="Aposenta um personagem ativo") # Descrição ajustada
+    @app_commands.describe(character="Nome do personagem ativo a aposentar") # Descrição ajustada
+    @app_commands.autocomplete(character=autocomplete_active_character) # Usa autocomplete de ativos
     async def inss(self, interaction: discord.Interaction, character: str):
         """Aposenta um personagem alterando seu status para APOSENTADO."""
         await interaction.response.defer(ephemeral=True)
@@ -223,13 +220,16 @@ class PersonagemCog(commands.Cog):
                     break
 
             if not personagem_encontrado:
-                # O autocomplete deve prevenir isso, mas checagem extra
-                await interaction.followup.send(f"❌ Personagem ativo '{character}' não encontrado.", ephemeral=True)
+                await interaction.followup.send(f"❌ Personagem '{character}' não encontrado.", ephemeral=True)
                 return
 
-            # Verificar se já está aposentado (o autocomplete deve prevenir, mas checagem extra)
+            # Verificar se já está aposentado (autocomplete deve prevenir, mas checagem extra)
             if personagem_encontrado.status == StatusPersonagem.APOSENTADO:
                  await interaction.followup.send(f"ℹ️ O personagem {personagem_encontrado.nome} já está aposentado.", ephemeral=True)
+                 return
+            # Verificar se está ativo (autocomplete deve garantir, mas checagem extra)
+            if personagem_encontrado.status != StatusPersonagem.ATIVO:
+                 await interaction.followup.send(f"❌ O personagem {personagem_encontrado.nome} não está ativo.", ephemeral=True)
                  return
 
             # Buscar a entidade completa para atualizar
