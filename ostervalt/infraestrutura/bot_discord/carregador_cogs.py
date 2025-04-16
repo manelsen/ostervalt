@@ -32,12 +32,14 @@ async def carregar_cogs(bot: commands.Bot, container):
             'obter_personagem_uc',
             'listar_personagens_uc',
             'repo_config_servidor',
+            'repo_personagens', # Adicionado para autocomplete
         ),
         'InventarioCog': (
             'listar_inventario_uc',
             'adicionar_item_inventario_uc',
             'remover_item_inventario_uc',
             'listar_personagens_uc',
+            'repo_personagens', # Adicionado para autocomplete
         ),
         'ItemCog': (
             'obter_item_uc',

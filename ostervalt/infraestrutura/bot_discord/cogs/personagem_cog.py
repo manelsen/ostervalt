@@ -13,6 +13,16 @@ from ostervalt.infraestrutura.persistencia.models import StatusPersonagem
 # from ostervalt.infraestrutura.bot_discord.autocomplete import autocomplete_character # Removido
 from ostervalt.infraestrutura.persistencia.repositorio_personagens import RepositorioPersonagensSQLAlchemy
 from ostervalt.nucleo.entidades.personagem import Personagem
+# Importar utilitários do Cog
+from ostervalt.infraestrutura.bot_discord.discord_helpers import (
+    obter_contexto_comando,
+    buscar_personagem_por_nome,
+    autocomplete_character as util_autocomplete_character, # Importa e renomeia
+    autocomplete_active_character as util_autocomplete_active_character, # Importa e renomeia
+    ComandoForaDeServidorError,
+    PersonagemNaoEncontradoError,
+    CogUtilsError
+)
 
 class PersonagemCog(commands.Cog):
     def __init__(
@@ -29,44 +39,19 @@ class PersonagemCog(commands.Cog):
         self.listar_personagens_uc = listar_personagens_uc
         self.repo_personagens = repo_personagens
         print("Cog Personagem carregado.")
-
-    # --- Autocomplete ---
-    async def autocomplete_character(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-        """Autocompleta com personagens do usuário (incluindo aposentados)."""
-        if not interaction.guild_id: return []
-        user_id = interaction.user.id
-        server_id = interaction.guild_id
-        try:
-            personagens: List[Personagem] = self.listar_personagens_uc.executar(usuario_id=user_id, servidor_id=server_id)
-            choices = [
-                app_commands.Choice(name=f"{p.nome}{' (Aposentado)' if p.status == StatusPersonagem.APOSENTADO else ''}", value=p.nome)
-                for p in personagens
-                if current.lower() in p.nome.lower()
-            ]
-            choices.sort(key=lambda c: '(Aposentado)' in c.name)
-            return choices[:25]
-        except Exception as e:
-            print(f"Erro no autocomplete_character (PersonagemCog): {e}")
-            return []
-
-    async def autocomplete_active_character(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-        """Autocompleta apenas com personagens ATIVOS do usuário."""
-        if not interaction.guild_id: return []
-        user_id = interaction.user.id
-        server_id = interaction.guild_id
-        try:
-            personagens: List[Personagem] = self.listar_personagens_uc.executar(usuario_id=user_id, servidor_id=server_id)
-            choices = [
-                app_commands.Choice(name=p.nome, value=p.nome)
-                for p in personagens
-                if p.status == StatusPersonagem.ATIVO and current.lower() in p.nome.lower() # Filtro ATIVO
-            ]
-            return choices[:25]
-        except Exception as e:
-            print(f"Erro no autocomplete_active_character (PersonagemCog): {e}")
-            return []
-
-    # --- Comandos Slash ---
+    
+        # --- Autocomplete (Usando funções de cog_utils) ---
+        async def autocomplete_character(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+            # TODO: Passar ListarPersonagensUC para a função utilitária quando ela for adaptada,
+            #       por enquanto, a função utilitária usa o repo diretamente.
+            return await util_autocomplete_character(interaction, current, self.repo_personagens)
+    
+        async def autocomplete_active_character(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+            # TODO: Passar ListarPersonagensUC para a função utilitária quando ela for adaptada,
+            #       por enquanto, a função utilitária usa o repo diretamente.
+            return await util_autocomplete_active_character(interaction, current, self.repo_personagens)
+    
+        # --- Comandos Slash ---
 
     @app_commands.command(name="criar", description="Cria um novo personagem.")
     @app_commands.describe(nome="O nome do seu novo personagem")
@@ -74,11 +59,7 @@ class PersonagemCog(commands.Cog):
         """Cria um novo personagem para o usuário."""
         await interaction.response.defer(ephemeral=True)
         try:
-            user_id = interaction.user.id
-            server_id = interaction.guild_id
-            if not server_id:
-                 await interaction.followup.send("❌ Este comando só pode ser usado em um servidor.", ephemeral=True)
-                 return
+            user_id, server_id = await obter_contexto_comando(interaction)
 
             resultado_personagem = self.criar_personagem_uc.executar(
                 nome=nome,
@@ -101,9 +82,13 @@ class PersonagemCog(commands.Cog):
             embed.add_field(name="Nível", value=resultado_dto.nivel, inline=True)
             embed.add_field(name="Dinheiro", value=f"🪙 {resultado_dto.dinheiro}", inline=True)
             await interaction.followup.send(embed=embed, ephemeral=True)
+        except ComandoForaDeServidorError as e:
+             await interaction.followup.send(f"❌ {e.mensagem}", ephemeral=True)
         except ValueError as e:
             print(f"Erro de valor ao criar personagem: {e}")
             await interaction.followup.send(f"❌ Erro ao criar o personagem: {e}", ephemeral=True)
+        except CogUtilsError as e: # Captura erros gerais dos utils
+             await interaction.followup.send(f"❌ {e}", ephemeral=True)
         except Exception as e:
             print(f"Erro inesperado ao criar personagem: {e}")
             traceback.print_exc()
@@ -116,23 +101,10 @@ class PersonagemCog(commands.Cog):
         """Exibe o perfil de um personagem."""
         await interaction.response.defer(ephemeral=True)
         try:
-            user_id = interaction.user.id
-            server_id = interaction.guild_id
-            if not server_id:
-                 await interaction.followup.send("❌ Este comando só pode ser usado em um servidor.", ephemeral=True)
-                 return
-
-            # Encontrar personagem pelo nome
-            target_personagem: Personagem | None = None
-            personagens_usuario = self.listar_personagens_uc.executar(usuario_id=user_id, servidor_id=server_id)
-            for p in personagens_usuario:
-                if p.nome.lower() == character.lower():
-                    target_personagem = p
-                    break
-
-            if target_personagem is None:
-                 await interaction.followup.send(f"❌ Personagem '{character}' não encontrado para seu usuário.", ephemeral=True)
-                 return
+            # Usar função utilitária para buscar personagem (inclui obter contexto)
+            target_personagem = await buscar_personagem_por_nome(
+                interaction, character, self.listar_personagens_uc, apenas_ativos=False # Busca qualquer status
+            )
 
             # Criar DTO a partir da entidade
             resultado_dto = PersonagemDTO(
@@ -156,9 +128,13 @@ class PersonagemCog(commands.Cog):
                 embed.set_footer(text=f"Criado em: {resultado_dto.criado_em.strftime('%d/%m/%Y %H:%M')}")
 
             await interaction.followup.send(embed=embed, ephemeral=True)
-        except ValueError as e:
+        except (ComandoForaDeServidorError, PersonagemNaoEncontradoError) as e:
+             await interaction.followup.send(f"❌ {e.mensagem}", ephemeral=True)
+        except ValueError as e: # Erros específicos do caso de uso (se houver)
             print(f"Erro de valor ao obter perfil: {e}")
             await interaction.followup.send(f"❌ Erro ao buscar perfil: {e}", ephemeral=True)
+        except CogUtilsError as e: # Captura erros gerais dos utils
+             await interaction.followup.send(f"❌ {e}", ephemeral=True)
         except Exception as e:
             print(f"Erro inesperado ao obter perfil: {e}")
             traceback.print_exc()
@@ -169,11 +145,7 @@ class PersonagemCog(commands.Cog):
         """Lista todos os personagens pertencentes ao usuário."""
         await interaction.response.defer(ephemeral=True)
         try:
-            user_id = interaction.user.id
-            server_id = interaction.guild_id
-            if not server_id:
-                 await interaction.followup.send("❌ Este comando só pode ser usado em um servidor.", ephemeral=True)
-                 return
+            user_id, server_id = await obter_contexto_comando(interaction)
 
             personagens = self.listar_personagens_uc.executar(usuario_id=user_id, servidor_id=server_id)
 
@@ -194,6 +166,10 @@ class PersonagemCog(commands.Cog):
                     inline=False
                 )
             await interaction.followup.send(embed=embed, ephemeral=True)
+        except ComandoForaDeServidorError as e:
+             await interaction.followup.send(f"❌ {e.mensagem}", ephemeral=True)
+        except CogUtilsError as e: # Captura erros gerais dos utils
+             await interaction.followup.send(f"❌ {e}", ephemeral=True)
         except Exception as e:
             print(f"Erro ao listar personagens: {e}")
             traceback.print_exc()
@@ -205,43 +181,39 @@ class PersonagemCog(commands.Cog):
     async def inss(self, interaction: discord.Interaction, character: str):
         """Aposenta um personagem alterando seu status para APOSENTADO."""
         await interaction.response.defer(ephemeral=True)
-        user_id = interaction.user.id
-        server_id = interaction.guild_id
-        if not server_id:
-             await interaction.followup.send("❌ Este comando só pode ser usado em um servidor.", ephemeral=True)
-             return
 
         try:
-            personagens_usuario = self.listar_personagens_uc.executar(usuario_id=user_id, servidor_id=server_id)
-            personagem_encontrado = None
-            for p in personagens_usuario:
-                if p.nome.lower() == character.lower():
-                    personagem_encontrado = p
-                    break
+            # Usar função utilitária para buscar personagem ATIVO
+            personagem_encontrado = await buscar_personagem_por_nome(
+                interaction, character, self.listar_personagens_uc, apenas_ativos=True
+            )
 
-            if not personagem_encontrado:
-                await interaction.followup.send(f"❌ Personagem '{character}' não encontrado.", ephemeral=True)
-                return
+            # A função buscar_personagem_por_nome já garante que o personagem foi encontrado
+            # e está ativo se apenas_ativos=True. Não precisamos mais das checagens manuais.
 
-            # Verificar se já está aposentado (autocomplete deve prevenir, mas checagem extra)
-            if personagem_encontrado.status == StatusPersonagem.APOSENTADO:
-                 await interaction.followup.send(f"ℹ️ O personagem {personagem_encontrado.nome} já está aposentado.", ephemeral=True)
-                 return
-            # Verificar se está ativo (autocomplete deve garantir, mas checagem extra)
-            if personagem_encontrado.status != StatusPersonagem.ATIVO:
-                 await interaction.followup.send(f"❌ O personagem {personagem_encontrado.nome} não está ativo.", ephemeral=True)
-                 return
-
-            # Buscar a entidade completa para atualizar
+            # Buscar a entidade completa para atualizar (pode ser necessário se o UC de listar não retornar tudo)
+            # Se ListarPersonagens já retorna a entidade completa, podemos usar personagem_encontrado diretamente.
+            # Assumindo que precisamos buscar novamente com ObterPersonagem para ter certeza:
             personagem_para_atualizar = self.obter_personagem_uc.executar(personagem_id=personagem_encontrado.id)
             if not personagem_para_atualizar:
+                 # Este erro não deveria acontecer se buscar_personagem_por_nome funcionou
                  await interaction.followup.send(f"❌ Erro interno ao re-buscar personagem {personagem_encontrado.nome}.", ephemeral=True)
+                 return
+
+            # Verificar se já está aposentado (redundante se buscar_personagem_por_nome(apenas_ativos=True) funcionou)
+            if personagem_para_atualizar.status == StatusPersonagem.APOSENTADO:
+                 await interaction.followup.send(f"ℹ️ O personagem {personagem_para_atualizar.nome} já está aposentado.", ephemeral=True)
                  return
 
             personagem_para_atualizar.status = StatusPersonagem.APOSENTADO
             self.repo_personagens.atualizar(personagem_para_atualizar)
             await interaction.followup.send(f"✅ Personagem **{personagem_para_atualizar.nome}** foi aposentado com sucesso.", ephemeral=True)
 
+        except (ComandoForaDeServidorError, PersonagemNaoEncontradoError) as e:
+             # PersonagemNaoEncontradoError aqui significa que não achou um ATIVO com esse nome
+             await interaction.followup.send(f"❌ {e.mensagem}", ephemeral=True)
+        except CogUtilsError as e: # Captura erros gerais dos utils
+             await interaction.followup.send(f"❌ {e}", ephemeral=True)
         except Exception as e:
             print(f"Erro ao aposentar personagem {character}: {e}")
             traceback.print_exc()
