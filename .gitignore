@@ -10,3 +10,4 @@ project_journal/*
 *.mako
 ostervalt/infraestrutura/persistencia/migrations/README
 ostervalt.egg-info/*
+Items.csv
